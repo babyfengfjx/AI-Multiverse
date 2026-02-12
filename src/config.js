@@ -90,7 +90,7 @@ const AI_CONFIG = {
     },
     qwen: {
         name: '通义千问',
-        icon: 'icons/qwen.svg',
+        icon: 'icons/qwen.png',
         urlPattern: '*://chat.qwen.ai/*',
         urlPatternAlt: '*://tongyi.aliyun.com/*',
         urlPatterns: [

@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Multiverse</title>
+    <link rel="stylesheet" href="sidepanel.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="sidebar-container">
+        <header class="sidebar-header">
+            <div class="logo-area">
+                <img src="../../icons/icon.svg" class="main-logo-img" alt="Logo">
+                <h2>AI Multiverse</h2>
+            </div>
+            <div class="header-actions">
+                <button class="icon-btn" id="openModelsBtn" title="Choose AI Models">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                        </path>
+                    </svg>
+                    <span class="btn-badge" id="selectionBadge">0</span>
+                </button>
+                <div class="status-indicator">
+                    <span class="status-dot online"></span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Tab Bar -->
+        <div class="tab-bar">
+            <button class="tab-btn active" data-tab="chat">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+                Chat
+            </button>
+            <button class="tab-btn" data-tab="responses">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7"></rect>
+                    <rect x="14" y="3" width="7" height="7"></rect>
+                    <rect x="3" y="14" width="7" height="7"></rect>
+                    <rect x="14" y="14" width="7" height="7"></rect>
+                </svg>
+                Responses
+            </button>
+        </div>
+
+        <!-- Chat Tab Content -->
+        <div class="tab-content active" id="chatTab">
+            <div class="main-content">
+                <div class="history-section" id="historySection">
+                    <div class="section-header">
+                        <h3>Conversation</h3>
+                        <button class="clear-btn-red" id="clearHistoryBtn">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.5">
+                                <path
+                                    d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2">
+                                </path>
+                            </svg>
+                            Clear All
+                        </button>
+                    </div>
+                    <div class="history-list" id="historyList">
+                        <!-- Messages -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Responses Tab Content -->
+        <div class="tab-content" id="responsesTab">
+            <div class="responses-panel">
+                <div class="responses-toolbar">
+                    <button class="primary-btn-blue fetch-btn" id="fetchResponsesBtn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M23 4v6h-6"></path>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                        </svg>
+                        <span>Fetch Responses</span>
+                    </button>
+                    <button class="secondary-btn-long" id="copyAllBtn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                        <span>Copy All</span>
+                    </button>
+                </div>
+                <div class="responses-grid" id="responsesGrid">
+                    <div class="responses-empty">
+                        <div class="empty-icon">💬</div>
+                        <p>No responses fetched yet.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detail Modal (for response cards) -->
+        <div class="modal-overlay" id="detailModal">
+            <div class="modal-content detail-content">
+                <div class="modal-header">
+                    <div class="modal-title detail-header-info">
+                        <img src="" id="detailIcon" class="provider-icon-img" alt="">
+                        <h3 id="detailName">AI Provider</h3>
+                    </div>
+                    <button class="close-modal-btn" id="closeDetailBtn">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2.5">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="detail-body" id="detailText">
+                    <!-- Detailed response goes here -->
+                </div>
+                <div class="modal-footer detail-modal-footer">
+                    <button class="primary-btn-send full-width" id="copyDetailBtn">Copy This Response</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal -->
+        <div class="modal-overlay" id="modelsModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <h3>AI Models</h3>
+                        <p>Select recipients</p>
+                    </div>
+                    <button class="close-modal-btn" id="closeModelsBtn">&times;</button>
+                </div>
+                <div class="provider-grid">
+                    <label class="provider-card" for="gemini">
+                        <input type="checkbox" id="gemini" value="gemini" checked>
+                        <div class="card-content">
+                            <img src="icons/gemini.svg" class="provider-icon-img" alt="Gemini">
+                            <span class="provider-name">Gemini</span>
+                        </div>
+                    </label>
+                    <label class="provider-card" for="grok">
+                        <input type="checkbox" id="grok" value="grok" checked>
+                        <div class="card-content">
+                            <img src="icons/grok.svg" class="provider-icon-img" alt="Grok">
+                            <span class="provider-name">Grok</span>
+                        </div>
+                    </label>
+                    <label class="provider-card" for="kimi">
+                        <input type="checkbox" id="kimi" value="kimi" checked>
+                        <div class="card-content">
+                            <img src="icons/kimi.png" class="provider-icon-img" alt="Kimi">
+                            <span class="provider-name">Kimi</span>
+                        </div>
+                    </label>
+                    <label class="provider-card" for="deepseek">
+                        <input type="checkbox" id="deepseek" value="deepseek" checked>
+                        <div class="card-content">
+                            <img src="icons/deepseek_official.png" class="provider-icon-img" alt="DeepSeek">
+                            <span class="provider-name">DeepSeek</span>
+                        </div>
+                    </label>
+                    <label class="provider-card" for="chatgpt">
+                        <input type="checkbox" id="chatgpt" value="chatgpt" checked>
+                        <div class="card-content">
+                            <img src="icons/chatgpt.svg" class="provider-icon-img" alt="ChatGPT">
+                            <span class="provider-name">ChatGPT</span>
+                        </div>
+                    </label>
+                    <label class="provider-card" for="qwen">
+                        <input type="checkbox" id="qwen" value="qwen" checked>
+                        <div class="card-content">
+                            <img src="icons/qwen_official.png" class="provider-icon-img" alt="Qwen">
+                            <span class="provider-name">通义千问</span>
+                        </div>
+                    </label>
+                    <label class="provider-card" for="yuanbao">
+                        <input type="checkbox" id="yuanbao" value="yuanbao" checked>
+                        <div class="card-content">
+                            <img src="icons/yuanbao.ico" class="provider-icon-img" alt="Yuanbao">
+                            <span class="provider-name">腾讯元宝</span>
+                        </div>
+                    </label>
+                </div>
+                <button class="primary-btn-blue full-width" id="confirmModelsBtn">Confirm</button>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer-section">
+            <div class="chat-section">
+                <textarea id="prompt" placeholder="Ask anything... (Enter to send)" rows="1"></textarea>
+                <div class="input-actions-bar">
+                    <div class="left-actions">
+                        <button class="action-btn-pill danger" id="closeAllBtn">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M18 6L6 18M6 6l12 12"></path>
+                            </svg>
+                            <span>Close</span>
+                        </button>
+                    </div>
+                    <div class="right-actions">
+                        <button class="action-btn-pill" id="launchBtn">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                <polyline points="15 3 21 3 21 9"></polyline>
+                                <line x1="10" y1="14" x2="21" y2="3"></line>
+                            </svg>
+                            <span>Open</span>
+                        </button>
+                        <button class="action-btn-pill" id="tileBtn">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <rect x="3" y="3" width="7" height="7"></rect>
+                                <rect x="14" y="3" width="7" height="7"></rect>
+                                <rect x="14" y="14" width="7" height="7"></rect>
+                                <rect x="3" y="14" width="7" height="7"></rect>
+                            </svg>
+                            <span>Tile</span>
+                        </button>
+                        <button class="primary-btn-send" id="sendBtn">
+                            <span>Send</span>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.5">
+                                <line x1="22" y1="2" x2="11" y2="13"></line>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div id="status" class="status-bar"></div>
+        </div>
+    </div>
+    <script src="../config.js"></script>
+    <script src="sidepanel.js"></script>
+</body>
+
+</html>

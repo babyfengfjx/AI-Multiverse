@@ -1,0 +1,77 @@
+{
+    "manifest_version": 3,
+    "name": "AI Multiverse Chat",
+    "version": "1.5",
+    "description": "Send messages to multiple AI web interfaces simultaneously (Gemini, Grok, Kimi, DeepSeek, ChatGPT, Qwen).",
+    "icons": {
+        "16": "icons/icon.svg",
+        "32": "icons/icon.svg",
+        "48": "icons/icon.svg",
+        "128": "icons/icon.svg"
+    },
+    "permissions": [
+        "activeTab",
+        "scripting",
+        "tabs",
+        "storage",
+        "system.display"
+    ],
+    "host_permissions": [
+        "*://gemini.google.com/*",
+        "*://grok.com/*",
+        "*://kimi.moonshot.cn/*",
+        "*://www.kimi.com/*",
+        "*://chat.deepseek.com/*",
+        "*://chatgpt.com/*",
+        "*://tongyi.aliyun.com/*",
+        "*://qianwen.aliyun.com/*",
+        "*://www.qianwen.com/*",
+        "*://qianwen.com/*",
+        "*://chat.qwen.ai/*",
+        "*://yuanbao.tencent.com/*"
+    ],
+    "action": {
+        "default_title": "AI Multiverse Chat",
+        "default_icon": {
+            "16": "icons/icon.svg",
+            "32": "icons/icon.svg",
+            "48": "icons/icon.svg",
+            "128": "icons/icon.svg"
+        }
+    },
+    "background": {
+        "service_worker": "src/background.js"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "*://gemini.google.com/*",
+                "*://grok.com/*",
+                "*://kimi.moonshot.cn/*",
+                "*://www.kimi.com/*",
+                "*://chat.deepseek.com/*",
+                "*://chatgpt.com/*",
+                "*://tongyi.aliyun.com/*",
+                "*://qianwen.aliyun.com/*",
+                "*://www.qianwen.com/*",
+                "*://qianwen.com/*",
+                "*://chat.qwen.ai/*",
+                "*://yuanbao.tencent.com/*"
+            ],
+            "js": [
+                "src/config.js",
+                "src/content/content.js"
+            ],
+            "run_at": "document_end"
+        }
+    ],
+    "commands": {
+        "_execute_action": {
+            "suggested_key": {
+                "default": "Alt+Shift+S",
+                "mac": "Alt+Shift+S"
+            },
+            "description": "Open AI Multiverse Chat"
+        }
+    }
+}

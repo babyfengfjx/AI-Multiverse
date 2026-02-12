@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Multiverse Agent</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <header>
+      <h1>AI Multiverse</h1>
+      <p>Broadcast your prompt to multiple AIs</p>
+    </header>
+    
+    <div class="selection-area">
+      <div class="provider-option">
+        <input type="checkbox" id="gemini" value="gemini" checked>
+        <label for="gemini">Gemini</label>
+      </div>
+      <div class="provider-option">
+        <input type="checkbox" id="grok" value="grok" checked>
+        <label for="grok">Grok</label>
+      </div>
+      <div class="provider-option">
+        <input type="checkbox" id="kimi" value="kimi" checked>
+        <label for="kimi">Kimi</label>
+      </div>
+      <div class="provider-option">
+        <input type="checkbox" id="deepseek" value="deepseek" checked>
+        <label for="deepseek">DeepSeek</label>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <textarea id="prompt" placeholder="Type your message here... (Ctrl+Enter to send)"></textarea>
+    </div>
+
+    <div class="actions">
+      <button id="sendBtn" class="primary-btn">
+        <span class="icon">🚀</span> Send to All
+      </button>
+    </div>
+
+    <div id="status" class="status-log"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

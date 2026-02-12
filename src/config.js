@@ -63,7 +63,7 @@ const AI_CONFIG = {
     },
     deepseek: {
         name: 'DeepSeek',
-        icon: 'icons/deepseek_official.png',
+        icon: 'icons/deepseek.svg',
         urlPattern: '*://chat.deepseek.com/*',
         baseUrl: 'https://chat.deepseek.com/',
         selectors: {
@@ -90,7 +90,7 @@ const AI_CONFIG = {
     },
     qwen: {
         name: '通义千问',
-        icon: 'icons/qwen_official.png',
+        icon: 'icons/qwen.svg',
         urlPattern: '*://chat.qwen.ai/*',
         urlPatternAlt: '*://tongyi.aliyun.com/*',
         urlPatterns: [

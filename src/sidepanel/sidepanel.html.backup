@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Multiverse</title>
+    <link rel="stylesheet" href="sidepanel.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- Markdown rendering libraries (local) -->
+    <link rel="stylesheet" href="../lib/github.min.css">
+</head>
+
+<body>
+    <div class="sidebar-container">
+        <header class="sidebar-header">
+            <div class="logo-area">
+                <img src="../../icons/icon.svg" class="main-logo-img" alt="Logo">
+                <h2 data-i18n="logo">AI Multiverse</h2>
+            </div>
+            <div class="header-actions">
+                <button class="icon-btn" id="langToggleBtn" data-i18n-title="switch_language" title="Switch Language">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="2" y1="12" x2="22" y2="12"></line>
+                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                    </svg>
+                    <span class="lang-badge">EN</span>
+                </button>
+                <button class="icon-btn" id="themeToggleBtn" data-i18n-title="toggle_theme" title="Toggle Theme">
+                    <svg class="theme-icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                    <svg class="theme-icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                </button>
+                <button class="icon-btn" id="summarizeSettingsBtn" data-i18n-title="summarize_settings" title="智能总结设置">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+                    </svg>
+                </button>
+                <button class="icon-btn" id="openModelsBtn" data-i18n-title="choose_models" title="Choose AI Models">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                        </path>
+                    </svg>
+                    <span class="btn-badge" id="selectionBadge">0</span>
+                </button>
+                <div class="status-indicator">
+                    <span class="status-dot online"></span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Tab Bar - REMOVED -->
+
+        <!-- Main Chat Interface -->
+        <div class="chat-interface">
+            <!-- Conversation Stream -->
+            <div class="conversation-stream" id="conversationStream">
+                <!-- Conversations will be dynamically inserted here -->
+                <div class="empty-state" id="emptyState">
+                    <div class="empty-icon">💬</div>
+                    <p data-i18n="no_conversations">开始你的第一次对话</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Section (Fixed at bottom) -->
+        <div class="input-section" id="inputSection">
+            <!-- File Preview -->
+            <div class="file-preview-container" id="filePreview" style="display: none;">
+                <div class="file-preview-header">
+                    <span data-i18n="file_preview">已附加文件</span>
+                    <button class="clear-files-btn" id="clearFilesBtn" data-i18n="file_clear_all">清空</button>
+                </div>
+                <div class="file-preview-list" id="filePreviewList"></div>
+            </div>
+
+            <!-- Drag Overlay -->
+            <div class="drag-overlay" id="dragOverlay">
+                <div class="drag-overlay-content">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                    </svg>
+                    <p data-i18n="drag_files_here">拖放文件到此处上传</p>
+                </div>
+            </div>
+
+            <!-- Input Box -->
+            <div class="input-box">
+                <input type="file" id="fileInput" multiple accept="image/*,.pdf,.txt,.doc,.docx,.md,.json,.csv" style="display: none;">
+                
+                <div class="input-wrapper">
+                    <textarea id="prompt" data-i18n-placeholder="ask_anything" placeholder="输入任何问题... (Enter 发送)" rows="1"></textarea>
+                    
+                    <div class="input-actions">
+                        <button class="action-btn" id="attachFileBtn" data-i18n-title="attach_files" title="附加文件">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                            </svg>
+                        </button>
+                        <button class="action-btn primary" id="sendBtn">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="22" y1="2" x2="11" y2="13"></line>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Old Chat Tab Content - REMOVED -->
+        <div class="tab-content" id="chatTab" style="display: none;">
+            <!-- Keep for reference during migration, will be removed -->
+        </div>
+
+        <!-- Responses Tab Content - REMOVED -->
+        <div class="tab-content" id="responsesTab" style="display: none;">
+            <!-- Keep for reference during migration, will be removed -->
+        </div>
+                            <span class="clear-text" data-i18n="clear_all">Clear All</span>
+                        </button>
+                    </div>
+                    <div class="history-list" id="historyList">
+                        <!-- Messages -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Responses Tab Content -->
+        <div class="tab-content" id="responsesTab">
+            <div class="responses-panel">
+                <div class="responses-toolbar">
+                    <button class="primary-btn-blue fetch-btn" id="fetchResponsesBtn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M23 4v6h-6"></path>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                        </svg>
+                        <span data-i18n="fetch_responses">Fetch Responses</span>
+                    </button>
+                </div>
+                <div class="responses-grid" id="responsesGrid">
+                    <div class="responses-empty">
+                        <div class="empty-icon">💬</div>
+                        <p data-i18n="no_responses">No responses fetched yet.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detail Modal (for response cards) -->
+        <div class="modal-overlay" id="detailModal">
+            <div class="modal-content detail-content">
+                <!-- Navigation Arrows -->
+                <button class="modal-nav-arrow modal-nav-left" id="modalNavLeft" aria-label="Previous response" data-i18n-title="prev_response" title="Previous response (←)">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="15 18 9 12 15 6"></polyline>
+                    </svg>
+                </button>
+                <button class="modal-nav-arrow modal-nav-right" id="modalNavRight" aria-label="Next response" data-i18n-title="next_response" title="Next response (→)">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                </button>
+                
+                <div class="modal-header">
+                    <div class="modal-title detail-header-info">
+                        <img src="" id="detailIcon" class="provider-icon-img" alt="">
+                        <h3 id="detailName">AI Provider</h3>
+                    </div>
+                    <button class="close-modal-btn" id="closeDetailBtn">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2.5">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="detail-body" id="detailText">
+                    <!-- Detailed response goes here -->
+                </div>
+                <div class="modal-footer detail-modal-footer">
+                    <button class="primary-btn-send" id="copyDetailBtn">Copy This Response</button>
+                    <!-- Position Indicator -->
+                    <div class="modal-position-indicator" id="modalPositionIndicator">
+                        <span class="position-text" id="positionText">1 of 1</span>
+                        <div class="position-dots" id="positionDots"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal -->
+        <div class="modal-overlay" id="modelsModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <h3 data-i18n="models_title">AI Models</h3>
+                        <p data-i18n="select_recipients">Select recipients</p>
+                    </div>
+                    <button class="close-modal-btn" id="closeModelsBtn">&times;</button>
+                </div>
+                <div class="provider-grid">
+                    <label class="provider-card" for="gemini">
+                        <input type="checkbox" id="gemini" value="gemini" checked>
+                        <div class="card-content">
+                            <img src="icons/gemini.svg" class="provider-icon-img" alt="Gemini">
+                            <span class="provider-name">Gemini</span>
+                        </div>
+                    </label>
+                    <label class="provider-card" for="grok">
+                        <input type="checkbox" id="grok" value="grok" checked>
+                        <div class="card-content">
+                            <img src="icons/grok.svg" class="provider-icon-img" alt="Grok">
+                            <span class="provider-name">Grok</span>
+                        </div>
+                    </label>
+                    <label class="provider-card" for="kimi">
+                        <input type="checkbox" id="kimi" value="kimi" checked>
+                        <div class="card-content">
+                            <img src="icons/kimi.png" class="provider-icon-img" alt="Kimi">
+                            <span class="provider-name">Kimi</span>
+                        </div>
+                    </label>
+                    <label class="provider-card" for="deepseek">
+                        <input type="checkbox" id="deepseek" value="deepseek" checked>
+                        <div class="card-content">
+                            <img src="icons/deepseek.svg" class="provider-icon-img" alt="DeepSeek">
+                            <span class="provider-name">DeepSeek</span>
+                        </div>
+                    </label>
+                    <label class="provider-card" for="chatgpt">
+                        <input type="checkbox" id="chatgpt" value="chatgpt" checked>
+                        <div class="card-content">
+                            <img src="icons/chatgpt.svg" class="provider-icon-img" alt="ChatGPT">
+                            <span class="provider-name">ChatGPT</span>
+                        </div>
+                    </label>
+                    <label class="provider-card" for="qwen">
+                        <input type="checkbox" id="qwen" value="qwen" checked>
+                        <div class="card-content">
+                            <img src="icons/qwen.png" class="provider-icon-img" alt="Qwen">
+                            <span class="provider-name">通义千问</span>
+                        </div>
+                    </label>
+                    <label class="provider-card" for="yuanbao">
+                        <input type="checkbox" id="yuanbao" value="yuanbao" checked>
+                        <div class="card-content">
+                            <img src="icons/yuanbao.ico" class="provider-icon-img" alt="Yuanbao">
+                            <span class="provider-name">腾讯元宝</span>
+                        </div>
+                    </label>
+                </div>
+                <button class="primary-btn-blue full-width" id="confirmModelsBtn" data-i18n="confirm">Confirm</button>
+            </div>
+        </div>
+
+        <!-- Close All Confirmation Modal -->
+        <div class="modal-overlay" id="closeAllModal">
+            <div class="modal-content confirm-modal">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <h3 data-i18n="close_all_title">Close All Windows?</h3>
+                        <p data-i18n="close_all_desc">This will close all browser windows currently opened by AI Multiverse.</p>
+                    </div>
+                    <button class="close-modal-btn" id="closeAllCancelIconBtn">&times;</button>
+                </div>
+                <div class="confirm-body">
+                    <p data-i18n="close_all_warning">Are you sure you want to close all AI conversation windows? In-progress responses will not be saved.</p>
+                </div>
+                <div class="confirm-actions">
+                    <button class="confirm-btn-secondary" id="closeAllCancelBtn" data-i18n="cancel">Cancel</button>
+                    <button class="confirm-btn-primary" id="closeAllConfirmBtn" data-i18n="confirm">Confirm</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Summarize Settings Modal -->
+        <div class="modal-overlay" id="summarizeSettingsModal">
+            <div class="modal-content summarize-modal">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <h3 data-i18n="summarize_settings_title">Summarize Settings</h3>
+                        <p data-i18n="summarize_settings_subtitle">Choose model and prompt for summarization</p>
+                    </div>
+                    <button class="close-modal-btn" id="closeSummarizeSettingsBtn">&times;</button>
+                </div>
+                <div class="summarize-body">
+                    <div class="summarize-setting-group">
+                        <label data-i18n="summarize_model_label">Summarization Model</label>
+                        <select id="summarizeModelSelect" class="summarize-select">
+                            <option value="gemini">Gemini</option>
+                            <option value="grok">Grok</option>
+                            <option value="kimi">Kimi</option>
+                            <option value="deepseek">DeepSeek</option>
+                            <option value="chatgpt">ChatGPT</option>
+                            <option value="qwen">Qwen</option>
+                            <option value="yuanbao">Yuanbao</option>
+                        </select>
+                    </div>
+                    <div class="summarize-setting-group">
+                        <label data-i18n="summarize_prompt_label">Summarization Prompt</label>
+                        <div class="prompt-actions">
+                            <button class="secondary-btn-small" id="useDefaultPromptBtn" data-i18n="use_defaultPrompt">Use Default</button>
+                            <button class="secondary-btn-small" id="resetPromptBtn" data-i18n="reset_prompt">Reset</button>
+                        </div>
+                        <textarea id="summarizePromptInput" class="summarize-textarea" rows="8" data-i18n-placeholder="prompt_placeholder_custom" placeholder="Enter your custom summarization prompt..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="confirm-btn-secondary" id="summarizeSettingsCancelBtn" data-i18n="cancel">Cancel</button>
+                    <button class="confirm-btn-primary" id="summarizeSettingsConfirmBtn" data-i18n="confirm">Confirm</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer-section">
+            <div class="chat-section" id="chatSection">
+                <!-- Drag and Drop Overlay -->
+                <div id="dragOverlay" class="drag-overlay" style="display: none;">
+                    <div class="drag-overlay-content">
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                        </svg>
+                        <p data-i18n="drag_files_here">Drop files here to upload</p>
+                    </div>
+                </div>
+
+                <!-- File Upload Preview -->
+                <div id="filePreview" class="file-preview" style="display: none;">
+                    <div class="file-preview-list" id="filePreviewList"></div>
+                    <button id="clearFilesBtn" class="clear-files-btn">×</button>
+                </div>
+
+                <textarea id="prompt" placeholder="Ask anything... (Enter to send)" rows="1"></textarea>
+                
+                <!-- Hidden file input for actual file selection -->
+                <input type="file" id="fileInput" multiple style="display: none;" accept="image/*,.pdf,.txt,.doc,.docx,.md,.json,.csv">
+                
+                <div class="input-actions-bar">
+                    <div class="left-actions">
+                        <button class="action-btn-pill" id="attachFileBtn" data-i18n-title="attach_files" title="Attach Files">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                            </svg>
+                            <span data-i18n="attach_file">Attach</span>
+                        </button>
+                        <button class="action-btn-pill danger" id="closeAllBtn">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M18 6L6 18M6 6l12 12"></path>
+                            </svg>
+                            <span data-i18n="close">Close</span>
+                        </button>
+                    </div>
+                    <div class="right-actions">
+                        <button class="action-btn-pill" id="launchBtn">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                <polyline points="15 3 21 3 21 9"></polyline>
+                                <line x1="10" y1="14" x2="21" y2="3"></line>
+                            </svg>
+                            <span data-i18n="open">Open</span>
+                        </button>
+                        <button class="action-btn-pill" id="tileBtn">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <rect x="3" y="3" width="7" height="7"></rect>
+                                <rect x="14" y="3" width="7" height="7"></rect>
+                                <rect x="14" y="14" width="7" height="7"></rect>
+                                <rect x="3" y="14" width="7" height="7"></rect>
+                            </svg>
+                            <span data-i18n="tile">Tile</span>
+                        </button>
+                        <button class="primary-btn-send" id="sendBtn">
+                            <span data-i18n="send">Send</span>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.5">
+                                <line x1="22" y1="2" x2="11" y2="13"></line>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                            </svg>
+                        </button>
+                        <button class="primary-btn-summarize" id="summarizeBtn" data-i18n-title="summarize_all" title="Summarize all responses">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                <polyline points="14 2 14 8 20 8"></polyline>
+                                <line x1="16" y1="13" x2="8" y2="13"></line>
+                                <line x1="16" y1="17" x2="8" y2="17"></line>
+                                <polyline points="10 9 9 9 8 9"></polyline>
+                            </svg>
+                            <span data-i18n="summarize">Summarize</span>
+                        </button>
+                        <!-- 问题显示区域 -->
+                        <div id="questionDisplay" class="question-display" style="display: none;">
+                            <span class="question-label" data-i18n="question">问题:</span>
+                            <span id="questionText" class="question-text"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="status" class="status-bar"></div>
+        </div>
+    </div>
+    <script src="../lib/marked.min.js"></script>
+    <script src="../lib/highlight-all.min.js"></script>
+    <script src="../lib/purify.min.js"></script>
+    <script src="../config.js"></script>
+    <script src="../i18n.js"></script>
+    <script src="sidepanel.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,3210 @@
+/**
+ * AI Multiverse - Sidepanel Logic
+ */
+
+// Configure marked.js - will be called after DOM loads
+function configureMarked() {
+    if (typeof marked !== 'undefined' && typeof hljs !== 'undefined') {
+        marked.setOptions({
+            highlight: function(code, lang) {
+                if (lang && hljs.getLanguage(lang)) {
+                    try {
+                        return hljs.highlight(code, { language: lang }).value;
+                    } catch (e) {
+                        console.error('[AI Multiverse] Highlight.js error:', e);
+                    }
+                }
+                try {
+                    return hljs.highlightAuto(code).value;
+                } catch (e) {
+                    console.error('[AI Multiverse] Highlight.js auto error:', e);
+                    return code;
+                }
+            },
+            breaks: true,
+            gfm: true,
+            pedantic: false,
+            sanitize: false
+        });
+        console.log('[AI Multiverse] Markdown libraries loaded and configured successfully');
+        return true;
+    } else {
+        console.error('[AI Multiverse] Markdown libraries not available:', {
+            marked: typeof marked,
+            hljs: typeof hljs,
+            DOMPurify: typeof DOMPurify
+        });
+        return false;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    // Configure Markdown libraries
+    const markdownReady = configureMarked();
+    console.log('[AI Multiverse] Markdown configuration result:', markdownReady);
+    
+    // --- State & Config ---
+    const AI_PROVIDERS = ['gemini', 'grok', 'kimi', 'deepseek', 'chatgpt', 'qwen', 'yuanbao'];
+    let lastResponses = {};
+    let lastQuestion = ''; // Track the last question asked
+    let currentTheme = 'dark'; // Default theme
+    let currentLang = 'zh-CN'; // Default language (Chinese)
+    let selectedFiles = []; // Store selected files
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB per file
+    const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50MB total
+
+    // Response completion tracking
+    let responseCompletionState = {
+        total: 0,
+        completed: 0,
+        allComplete: false
+    };
+    
+    // 实时更新状态：是否正在实时轮询中（未冻结）
+    let isRealtimeUpdating = false;
+    
+    // 当前对话的providers，用于实时更新UI
+    let currentConversationProviders = [];
+    
+    // 跟踪每个provider的内容长度历史，用于判断是否真正完成
+    let providerResponseHistory = {};
+
+    // --- Markdown Rendering Functions ---
+    
+    /**
+     * Render Markdown text to HTML with syntax highlighting
+     * @param {string} text - Markdown text to render
+     * @returns {string} - Sanitized HTML
+     */
+    function renderMarkdown(text) {
+        if (!text || typeof text !== 'string') {
+            return '';
+        }
+
+        try {
+            // Clean up excessive blank lines before rendering
+            // Replace 3 or more consecutive newlines with just 2
+            text = text.replace(/\n{3,}/g, '\n\n');
+
+            // Check if libraries are loaded
+            if (typeof marked === 'undefined') {
+                console.warn('[AI Multiverse] marked.js not loaded, falling back to plain text');
+                return escapeHTML(text);
+            }
+
+            let html;
+            
+            // Check if text contains HTML tags (simple detection)
+            const hasHtmlTags = /<[a-z][\s\S]*>/i.test(text);
+            
+            if (hasHtmlTags) {
+                // If it looks like HTML, use it directly (after sanitization)
+                html = text;
+            } else {
+                // Otherwise, parse as Markdown
+                html = marked.parse(text);
+            }
+
+            // Sanitize HTML to prevent XSS
+            if (typeof DOMPurify !== 'undefined') {
+                html = DOMPurify.sanitize(html, {
+                    ALLOWED_TAGS: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'strong', 
+                                   'em', 'code', 'pre', 'a', 'ul', 'ol', 'li', 'blockquote',
+                                   'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'img',
+                                   'span', 'div', 'del', 'ins', 'sup', 'sub',
+                                   'svg', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon',
+                                   'g', 'defs', 'marker', 'clipPath', 'linearGradient', 'radialGradient',
+                                   'stop', 'title', 'desc', 'text', 'tspan'],
+                    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel', 'style',
+                                   'width', 'height', 'viewBox', 'fill', 'stroke', 'stroke-width',
+                                   'stroke-linecap', 'stroke-linejoin', 'd', 'cx', 'cy', 'r',
+                                   'x', 'y', 'rx', 'ry', 'points', 'transform', 'opacity',
+                                   'x1', 'y1', 'x2', 'y2', 'marker-start', 'marker-end',
+                                   'gradientTransform', 'gradientUnits', 'spreadMethod',
+                                   'stop-color', 'stop-opacity', 'offset', 'xlink:href']
+                });
+            } else {
+                console.warn('[AI Multiverse] DOMPurify not loaded, HTML not sanitized');
+            }
+
+            return html;
+        } catch (e) {
+            console.error('[AI Multiverse] Markdown parsing error:', e);
+            // Fallback to escaped plain text
+            return escapeHTML(text);
+        }
+    }
+
+    /**
+     * Escape HTML to prevent XSS
+     * @param {string} text - Text to escape
+     * @returns {string} - Escaped text
+     */
+    function escapeHTML(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    /**
+     * Add copy buttons to code blocks
+     * @param {HTMLElement} container - Container element with code blocks
+     */
+    function addCopyButtonsToCodeBlocks(container) {
+        const codeBlocks = container.querySelectorAll('pre code');
+        codeBlocks.forEach((codeBlock) => {
+            const pre = codeBlock.parentElement;
+            
+            // Skip if button already exists
+            if (pre.querySelector('.copy-code-btn')) {
+                return;
+            }
+
+            // Wrap in a container for positioning
+            if (!pre.classList.contains('code-block-wrapper')) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'code-block-wrapper';
+                pre.parentNode.insertBefore(wrapper, pre);
+                wrapper.appendChild(pre);
+            }
+
+            // Create copy button
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'copy-code-btn';
+            copyBtn.textContent = 'Copy';
+            copyBtn.title = 'Copy code to clipboard';
+
+            copyBtn.addEventListener('click', async () => {
+                const code = codeBlock.textContent;
+                try {
+                    await navigator.clipboard.writeText(code);
+                    copyBtn.textContent = 'Copied!';
+                    copyBtn.style.background = '#4CAF50';
+                    copyBtn.style.color = 'white';
+                    setTimeout(() => {
+                        copyBtn.textContent = 'Copy';
+                        copyBtn.style.background = '';
+                        copyBtn.style.color = '';
+                    }, 2000);
+                } catch (err) {
+                    console.error('Failed to copy code:', err);
+                    copyBtn.textContent = 'Failed';
+                    setTimeout(() => {
+                        copyBtn.textContent = 'Copy';
+                    }, 2000);
+                }
+            });
+
+            pre.appendChild(copyBtn);
+        });
+    }
+
+    // --- DOM Elements ---
+    const promptInput = document.getElementById('prompt');
+    const sendBtn = document.getElementById('sendBtn');
+    const launchBtn = document.getElementById('launchBtn');
+    const tileBtn = document.getElementById('tileBtn');
+    const closeAllBtn = document.getElementById('closeAllBtn');
+    const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+    const historyList = document.getElementById('historyList');
+    const statusPanel = document.getElementById('status');
+    const fetchResponsesBtn = document.getElementById('fetchResponsesBtn');
+    const copyAllBtn = document.getElementById('copyAllBtn');
+    const responsesGrid = document.getElementById('responsesGrid');
+    const selectionBadge = document.getElementById('selectionBadge');
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+    const langToggleBtn = document.getElementById('langToggleBtn');
+    const langBadge = document.querySelector('.lang-badge');
+
+    // File upload elements
+    const fileInput = document.getElementById('fileInput');
+    const attachFileBtn = document.getElementById('attachFileBtn');
+    const filePreview = document.getElementById('filePreview');
+    const filePreviewList = document.getElementById('filePreviewList');
+    const clearFilesBtn = document.getElementById('clearFilesBtn');
+
+    // Modal
+    const modelsModal = document.getElementById('modelsModal');
+    const openModelsBtn = document.getElementById('openModelsBtn');
+    const closeModelsBtn = document.getElementById('closeModelsBtn');
+    const confirmModelsBtn = document.getElementById('confirmModelsBtn');
+
+    // Detail Modal
+    const detailModal = document.getElementById('detailModal');
+    const closeDetailBtn = document.getElementById('closeDetailBtn');
+    const copyDetailBtn = document.getElementById('copyDetailBtn');
+    const detailIcon = document.getElementById('detailIcon');
+    const detailName = document.getElementById('detailName');
+    const detailText = document.getElementById('detailText');
+    
+    // Modal Navigation Elements
+    const modalNavLeft = document.getElementById('modalNavLeft');
+    const modalNavRight = document.getElementById('modalNavRight');
+    const modalPositionIndicator = document.getElementById('modalPositionIndicator');
+    const positionText = document.getElementById('positionText');
+    const positionDots = document.getElementById('positionDots');
+
+    // Close-all modal
+    const closeAllModal = document.getElementById('closeAllModal');
+    const closeAllConfirmBtn = document.getElementById('closeAllConfirmBtn');
+    const closeAllCancelBtn = document.getElementById('closeAllCancelBtn');
+    const closeAllCancelIconBtn = document.getElementById('closeAllCancelIconBtn');
+
+    // Summarize elements
+    const summarizeBtn = document.getElementById('summarizeBtn'); // Old button in toolbar (deprecated)
+    const summarizeSettingsBtn = document.getElementById('summarizeSettingsBtn'); // New button in header
+    const summarizeSettingsModal = document.getElementById('summarizeSettingsModal');
+    const closeSummarizeSettingsBtn = document.getElementById('closeSummarizeSettingsBtn');
+    const summarizeSettingsConfirmBtn = document.getElementById('summarizeSettingsConfirmBtn');
+    const summarizeSettingsCancelBtn = document.getElementById('summarizeSettingsCancelBtn');
+    const summarizeModelSelect = document.getElementById('summarizeModelSelect');
+    const summarizePromptInput = document.getElementById('summarizePromptInput');
+    const useDefaultPromptBtn = document.getElementById('useDefaultPromptBtn');
+    const resetPromptBtn = document.getElementById('resetPromptBtn');
+
+    // Summarize state
+    let summarizeModel = 'gemini'; // Default summarization model
+    let customSummarizePrompt = ''; // Custom prompt
+    let isSummarizing = false; // Flag to prevent duplicate summarizations
+    // Removed autoSummarizeEnabled - now manual trigger only
+
+    // Default summarization prompt (powerful and comprehensive)
+    const DEFAULT_SUMMARIZE_PROMPT_EN = `You are an expert at synthesizing information from multiple AI sources. Your task is to create a comprehensive, accurate, and well-structured summary.
+
+## Input
+You will receive responses from multiple AI models answering the same question. Each response is labeled with its source model.
+
+## Guidelines
+1. **Understand the core question** - Identify the main question being asked
+2. **Synthesize key information** - Extract the most important points from each model's response
+3. **Identify consensus** - Highlight where models agree
+4. **Note differences** - Clearly explain where models disagree or offer different perspectives
+5. **Prioritize accuracy** - Flag any potential errors or contradictory information
+6. **Create structure** - Organize into clear sections with headings
+7. **Be concise yet comprehensive** - Don't just copy-paste; create new synthesized content
+
+## Output Format
+Use this structure:
+
+### Summary Title
+Brief 1-2 sentence overview
+
+### Key Points (Consensus)
+- Point 1 (mentioned by models: A, B, C)
+- Point 2 (mentioned by models: D, E)
+- Additional points...
+
+### Divergent Perspectives
+**Perspective A**: X (from Models: A, B)
+**Perspective B**: Y (from Models: C, D)
+
+### Unique Insights
+- Unique insight from Model A
+- Unique insight from Model B
+- ...
+
+### Final Answer
+[Provide the best synthesized answer based on all responses]
+
+Start your response now. Remember to cite which models contributed to each point.`;
+
+    const DEFAULT_SUMMARIZE_PROMPT_ZH = `作为一个善于综合多个AI来源信息的专业助手，你的任务是创建一个全面、准确、结构清晰的总结。
+
+## 输入
+你将收到多个AI模型对同一问题的回答。每个回答都已标注来源模型。
+
+## 指导原则
+1. **理解核心问题** - 识别所问的主要问题
+2. **综合关键信息** - 从每个模型的回答中提取最重要的观点
+3. **识别共识** - 强调模型们一致的观点
+4. **记录差异** - 清楚说明模型存在分歧或提供不同观点的地方
+5. **优先准确性** - 标记任何潜在错误或矛盾信息
+6. **创建结构** - 组织成清晰的有标题的章节
+7. **简洁而全面** - 不要只是复制粘贴；创建新的综合内容
+
+## 输出格式
+使用以下结构：
+
+### 总结标题
+1-2句话的简短概述
+
+### 关键观点（共识）
+- 观点1（模型：A，B，C提到）
+- 观点2（模型：D，E提到）
+- 其他观点...
+
+### 分歧观点
+**观点 A**: X（来自模型：A，B）
+**观点 B**: Y（来自模型：C，D）
+
+### 独特见解
+- 来自模型A的独特见解
+- 来自模型B的独特见解
+- ...
+
+### 最终答案
+[基于所有回答提供最佳的综合答案]
+
+现在开始你的回答。记得在每个观点后注明贡献的模型。`;
+
+    // --- Initialization ---
+    loadTheme();
+    loadLanguage();
+    loadSelectedProviders();
+    renderHistory();
+    updateBadge();
+    loadSavedQuestion(); // 加载保存的问题到右下角显示
+    
+    // 检查并启用总结按钮（如果有历史响应）
+    checkAndEnableSummarizeButton();
+    
+    // 隐藏获取响应按钮（已实现自动实时获取）
+    if (fetchResponsesBtn) {
+        fetchResponsesBtn.style.display = 'none';
+    }
+
+    // 检查并启用总结按钮的函数
+    function checkAndEnableSummarizeButton() {
+        const summarizeBtn = document.getElementById('summarizeBtn');
+        if (summarizeBtn && lastResponses && Object.keys(lastResponses).length > 0) {
+            const hasSuccessfulResponses = Object.values(lastResponses).some(r => r.status === 'ok');
+            if (hasSuccessfulResponses) {
+                summarizeBtn.disabled = false;
+                summarizeBtn.classList.add('ready');
+                console.log('[AI Multiverse] Enabled summarize button on init');
+            }
+        }
+    }
+    
+    // 首次加载时获取响应数据
+    async function initFetchResponses() {
+        const providers = getSelectedProviders();
+        if (providers.length > 0) {
+            try {
+                const result = await new Promise((resolve) => {
+                    chrome.runtime.sendMessage({
+                        action: 'fetch_all_responses',
+                        providers: providers
+                    }, resolve);
+                });
+                
+                if (result && result.status === 'ok' && result.responses) {
+                    lastResponses = result.responses;
+                    renderResponses(result.responses, providers);
+                    checkAndEnableSummarizeButton();
+                    console.log('[AI Multiverse] Initial responses fetched');
+                }
+            } catch (e) {
+                console.log('[AI Multiverse] Initial fetch failed:', e);
+            }
+        }
+    }
+    
+    // 首次加载时自动获取响应
+    initFetchResponses();
+
+    // --- Theme Toggle ---
+    themeToggleBtn.addEventListener('click', toggleTheme);
+
+    // --- Language Toggle ---
+    langToggleBtn.addEventListener('click', toggleLanguage);
+
+    // --- Layout Helpers (Responses View) ---
+    function updateResponsesLayout() {
+        if (!responsesGrid) return;
+        // 使用整个窗口宽度来判断当前是「默认竖向」还是「宽屏并列」模式
+        const wideThreshold = 900;
+        const width = window.innerWidth || responsesGrid.clientWidth;
+        if (width >= wideThreshold) {
+            responsesGrid.classList.add('wide-layout');
+        } else {
+            responsesGrid.classList.remove('wide-layout');
+        }
+    }
+
+    window.addEventListener('resize', updateResponsesLayout);
+
+    // --- Tab Switching ---
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            const tabId = btn.getAttribute('data-tab');
+            document.getElementById(tabId + 'Tab').classList.add('active');
+
+            if (tabId === 'responses') {
+                updateResponsesLayout();
+                fetchResponses();
+                
+                // Check if we have responses and enable summarize button
+                const summarizeBtn = document.getElementById('summarizeBtn');
+                if (summarizeBtn && lastResponses && Object.keys(lastResponses).length > 0) {
+                    const hasSuccessfulResponses = Object.values(lastResponses).some(r => r.status === 'ok');
+                    if (hasSuccessfulResponses) {
+                        summarizeBtn.disabled = false;
+                        console.log('[AI Multiverse] Enabled summarize button on tab switch');
+                    }
+                }
+            }
+        });
+    });
+
+    // --- Model Selection Modal ---
+    function toggleModal(show) {
+        if (show) modelsModal.classList.add('active');
+        else modelsModal.classList.remove('active');
+    }
+
+    // 显示问题到右下角输入框区域
+    function showQuestionInDisplay(question) {
+        const questionDisplay = document.getElementById('questionDisplay');
+        const questionText = document.getElementById('questionText');
+        
+        if (questionDisplay && questionText && question) {
+            questionText.textContent = question.length > 100 ? question.substring(0, 100) + '...' : question;
+            questionDisplay.style.display = 'flex';
+            
+            // 保存到chrome.storage
+            chrome.storage.local.set({ last_question: question });
+        }
+    }
+
+    // 加载保存的问题
+    function loadSavedQuestion() {
+        chrome.storage.local.get(['last_question'], (result) => {
+            if (result.last_question) {
+                showQuestionInDisplay(result.last_question);
+            }
+        });
+    }
+
+    openModelsBtn.addEventListener('click', () => toggleModal(true));
+    closeModelsBtn.addEventListener('click', () => toggleModal(false));
+    confirmModelsBtn.addEventListener('click', () => {
+        saveSelectedProviders();
+        updateBadge();
+        toggleModal(false);
+        
+        // 如果当前在响应tab，自动刷新响应界面
+        const activeTab = document.querySelector('.tab-btn.active');
+        if (activeTab && activeTab.getAttribute('data-tab') === 'responses') {
+            updateResponsesLayout();
+            fetchResponses();
+            console.log('[AI Multiverse] 模型配置已更新，响应界面已刷新');
+        }
+    });
+
+    modelsModal.addEventListener('click', (e) => {
+        if (e.target === modelsModal) toggleModal(false);
+    });
+
+    // --- File Upload Event Listeners ---
+    attachFileBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', handleFileSelect);
+    clearFilesBtn.addEventListener('click', clearAllFiles);
+
+    // --- Drag and Drop Event Listeners ---
+    const chatSection = document.getElementById('chatSection');
+    const dragOverlay = document.getElementById('dragOverlay');
+    const promptTextarea = document.getElementById('prompt');
+
+    if (chatSection && dragOverlay && promptTextarea) {
+        // Prevent default drag behavior on the chat section
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            chatSection.addEventListener(eventName, preventDefaults, false);
+            promptTextarea.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        // Handle drag enter
+        ['dragenter', 'dragover'].forEach(eventName => {
+            chatSection.addEventListener(eventName, highlight, false);
+        });
+
+        // Handle drag leave
+        ['dragleave', 'drop'].forEach(eventName => {
+            chatSection.addEventListener(eventName, unhighlight, false);
+        });
+
+        // Highlight drop zone
+        function highlight(e) {
+            chatSection.classList.add('drag-over');
+            dragOverlay.style.display = 'flex';
+        }
+
+        // Unhighlight drop zone
+        function unhighlight(e) {
+            chatSection.classList.remove('drag-over');
+            dragOverlay.style.display = 'none';
+        }
+
+        // Handle drop
+        chatSection.addEventListener('drop', handleDrop, false);
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = Array.from(dt.files);
+
+            processDroppedFiles(files);
+        }
+    }
+
+    // Process dropped files
+    async function processDroppedFiles(files) {
+        if (!files || files.length === 0) return;
+
+        // Validate and process each file
+        for (const file of files) {
+            // Check file size
+            if (file.size > MAX_FILE_SIZE) {
+                showNotification(t('file_too_large', { max: (MAX_FILE_SIZE / 1024 / 1024).toFixed(0) }), 'error');
+                continue;
+            }
+
+            // Check total size
+            const currentTotalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+            const newTotalSize = currentTotalSize + file.size;
+            if (newTotalSize > MAX_TOTAL_SIZE) {
+                showNotification(t('file_size_too_large', { max: (MAX_TOTAL_SIZE / 1024 / 1024).toFixed(0) }), 'error');
+                continue;
+            }
+
+            // Read file using existing function
+            try {
+                const fileData = await readFileAsDataURL(file);
+                selectedFiles.push(fileData);
+                renderFilePreview();
+                showNotification(t('file_added', { name: file.name }), 'success');
+            } catch (error) {
+                console.error('Failed to read dropped file:', error);
+                showNotification(t('err_file_read_failed', { filename: file.name }), 'error');
+            }
+        }
+    }
+
+    // Simple notification function (will be enhanced with Toast in v1.7)
+    function showNotification(message, type = 'info') {
+        // For now, use console and alert for critical errors
+        console.log(`[${type.toUpperCase()}] ${message}`);
+
+        // Only show alert for errors (this will be replaced with Toast in v1.7)
+        if (type === 'error') {
+            alert(message);
+        }
+    }
+
+    // --- Close All Modal ---
+    function toggleCloseAllModal(show) {
+        if (!closeAllModal) return;
+        if (show) closeAllModal.classList.add('active');
+        else closeAllModal.classList.remove('active');
+    }
+
+    if (closeAllCancelBtn) closeAllCancelBtn.onclick = () => toggleCloseAllModal(false);
+    if (closeAllCancelIconBtn) closeAllCancelIconBtn.onclick = () => toggleCloseAllModal(false);
+    if (closeAllModal) {
+        closeAllModal.addEventListener('click', (e) => {
+            if (e.target === closeAllModal) toggleCloseAllModal(false);
+        });
+    }
+
+    if (closeAllConfirmBtn) {
+        closeAllConfirmBtn.onclick = () => {
+            chrome.runtime.sendMessage({ action: 'close_all_windows' });
+            toggleCloseAllModal(false);
+        };
+    }
+
+    // --- Response Detail Modal ---
+    function showDetail(providerId, data) {
+        console.log('[AI Multiverse] Showing detail for:', providerId, 'Text length:', data.text?.length);
+        
+        // Collect all available responses
+        const responses = [];
+        let initialIndex = 0;
+        
+        if (lastResponses && Object.keys(lastResponses).length > 0) {
+            // Build response array from lastResponses
+            Object.entries(lastResponses).forEach(([provider, responseData], index) => {
+                if (responseData && responseData.status === 'ok') {
+                    const config = (typeof AI_CONFIG !== 'undefined') ? AI_CONFIG[provider] : null;
+                    responses.push({
+                        provider: provider,
+                        name: config ? config.name : provider,
+                        icon: config ? config.icon : '',
+                        text: responseData.text || '',
+                        html: responseData.html || '',
+                        status: responseData.status,
+                        length: responseData.length || 0
+                    });
+                    
+                    // Track which response was clicked
+                    if (provider === providerId) {
+                        initialIndex = responses.length - 1;
+                    }
+                }
+            });
+        }
+        
+        // If no responses found, create single response from provided data
+        if (responses.length === 0) {
+            const config = (typeof AI_CONFIG !== 'undefined') ? AI_CONFIG[providerId] : null;
+            responses.push({
+                provider: providerId,
+                name: config ? config.name : providerId,
+                icon: config ? config.icon : '',
+                text: data.text || '',
+                html: data.html || '',
+                status: 'ok',
+                length: data.text?.length || 0
+            });
+        }
+        
+        // Don't use saved index - always use the clicked card's index
+        // This ensures clicking a card shows that specific card, not the last viewed one
+        
+        // Initialize navigation state
+        initNavigationState(responses, initialIndex);
+        
+        // Create controller
+        const controller = new NavigationController(responses, initialIndex);
+        const currentResponse = controller.getCurrentResponse();
+        
+        // Update modal content
+        const config = (typeof AI_CONFIG !== 'undefined') ? AI_CONFIG[currentResponse.provider] : null;
+        detailIcon.src = config ? config.icon : '';
+        detailName.textContent = config ? t(currentResponse.provider) : currentResponse.provider;
+        
+        // Render content
+        // Use HTML directly if available (preserves original formatting from AI provider)
+        // Otherwise display plain text without Markdown rendering
+        if (currentResponse.html) {
+            // Use original HTML from AI provider - don't add markdown-content class
+            detailText.innerHTML = currentResponse.html;
+            detailText.className = 'detail-body';
+            console.log('[AI Multiverse] Using original HTML, length:', currentResponse.html.length);
+        } else if (currentResponse.text) {
+            // Display plain text without Markdown rendering
+            detailText.textContent = currentResponse.text;
+            detailText.className = 'detail-body';
+            console.log('[AI Multiverse] Using plain text, length:', currentResponse.text.length);
+        } else {
+            detailText.innerHTML = '<p>No content available</p>';
+            detailText.className = 'detail-body';
+        }
+        
+        // Add copy buttons to code blocks
+        addCopyButtonsToCodeBlocks(detailText);
+        
+        // Update navigation controls
+        updateNavigationControls(controller);
+        
+        // Update position indicator
+        updatePositionIndicator(controller.getPosition());
+        
+        // Update copy button
+        copyDetailBtn.onclick = () => {
+            navigator.clipboard.writeText(currentResponse.text).then(() => {
+                copyDetailBtn.textContent = t('copied');
+                setTimeout(() => copyDetailBtn.textContent = t('copy_response'), 1500);
+            });
+        };
+        
+        // Show modal
+        detailModal.classList.add('active');
+        
+        // 恢复导航箭头和位置指示器显示状态
+        restoreDetailModalNavigation();
+        
+        // Initialize resize handles when modal opens
+        setTimeout(() => {
+            initModalResize();
+        }, 100);
+    }
+
+    // --- Show Summary Detail Modal ---
+    function showSummaryDetail(entry, displayName) {
+        console.log('[AI Multiverse] Showing summary detail');
+        
+        // 创建单个总结响应对象
+        const summaryResponse = {
+            provider: entry.modelName,
+            name: displayName,
+            icon: AI_CONFIG[entry.modelName]?.icon || '',
+            text: entry.text,
+            html: renderMarkdown(entry.text),
+            status: 'ok',
+            length: entry.text?.length || 0
+        };
+        
+        // 初始化导航状态（单条总结）
+        initNavigationState([summaryResponse], 0);
+        
+        // 创建导航控制器
+        const controller = new NavigationController([summaryResponse], 0);
+        const currentResponse = controller.getCurrentResponse();
+        
+        // 更新模态框内容
+        const config = AI_CONFIG[currentResponse.provider] || {};
+        detailIcon.src = config.icon || '';
+        detailName.textContent = '✨ ' + (t(currentResponse.provider) || currentResponse.name);
+        
+        // 渲染内容
+        if (currentResponse.html) {
+            detailText.innerHTML = currentResponse.html;
+            detailText.className = 'detail-body markdown-content';
+        } else if (currentResponse.text) {
+            const renderedHtml = renderMarkdown(currentResponse.text);
+            detailText.innerHTML = renderedHtml;
+            detailText.className = 'detail-body markdown-content';
+        }
+        
+        // 添加代码块复制按钮
+        addCopyButtonsToCodeBlocks(detailText);
+        
+        // 隐藏导航箭头（因为只有一条总结）
+        document.getElementById('modalNavLeft').classList.add('hidden');
+        document.getElementById('modalNavRight').classList.add('hidden');
+        
+        // 隐藏位置指示器
+        document.getElementById('modalPositionIndicator').classList.add('hidden');
+        
+        // 更新复制按钮
+        copyDetailBtn.onclick = () => {
+            navigator.clipboard.writeText(currentResponse.text).then(() => {
+                copyDetailBtn.textContent = t('copied');
+                setTimeout(() => copyDetailBtn.textContent = t('copy_response'), 1500);
+            });
+        };
+        
+        // 显示模态框
+        detailModal.classList.add('active');
+        
+        // 初始化调整大小手柄
+        setTimeout(() => {
+            initModalResize();
+        }, 100);
+    }
+
+    closeDetailBtn.onclick = () => {
+        // Save current navigation state before closing
+        if (modalNavigationState.responses.length > 0) {
+            console.log('[AI Multiverse] Saving navigation state:', modalNavigationState.currentIndex);
+        }
+        detailModal.classList.remove('active');
+        // 恢复导航箭头和位置指示器显示状态
+        restoreDetailModalNavigation();
+    };
+    
+    detailModal.onclick = (e) => { 
+        if (e.target === detailModal) {
+            // Save current navigation state before closing
+            if (modalNavigationState.responses.length > 0) {
+                console.log('[AI Multiverse] Saving navigation state:', modalNavigationState.currentIndex);
+            }
+            detailModal.classList.remove('active');
+            // 恢复导航箭头和位置指示器显示状态
+            restoreDetailModalNavigation();
+        }
+    };
+
+    // 恢复详情模态框的导航元素显示状态
+    function restoreDetailModalNavigation() {
+        const navLeft = document.getElementById('modalNavLeft');
+        const navRight = document.getElementById('modalNavRight');
+        const positionIndicator = document.getElementById('modalPositionIndicator');
+        
+        // 如果有多个响应，显示导航箭头和位置指示器
+        if (modalNavigationState.responses.length > 1) {
+            navLeft.classList.remove('hidden');
+            navRight.classList.remove('hidden');
+            positionIndicator.classList.remove('hidden');
+        } else {
+            // 隐藏导航箭头和位置指示器（单条内容）
+            navLeft.classList.add('hidden');
+            navRight.classList.add('hidden');
+            positionIndicator.classList.add('hidden');
+        }
+    }
+
+    // --- Modal Navigation State ---
+    let modalNavigationState = {
+        responses: [],           // Array of response objects {provider, name, icon, text, html, status}
+        currentIndex: 0,         // Current response index (0-based)
+        lastViewedIndex: 0,      // Last viewed index for persistence
+        isNavigating: false      // Lock flag to prevent concurrent navigation
+    };
+
+    /**
+     * Initialize navigation state with response collection
+     * @param {Array} responses - Array of response objects
+     * @param {number} initialIndex - Initial response index
+     */
+    function initNavigationState(responses, initialIndex = 0) {
+        modalNavigationState.responses = responses;
+        modalNavigationState.currentIndex = initialIndex;
+        modalNavigationState.isNavigating = false;
+        console.log('[AI Multiverse] Navigation state initialized:', {
+            totalResponses: responses.length,
+            initialIndex: initialIndex,
+            providers: responses.map(r => r.provider)
+        });
+    }
+
+    /**
+     * Get current navigation state
+     * @returns {Object} Current navigation state
+     */
+    function getNavigationState() {
+        return {
+            ...modalNavigationState,
+            hasMultipleResponses: modalNavigationState.responses.length > 1
+        };
+    }
+
+    /**
+     * Update current index in navigation state
+     * @param {number} newIndex - New index value
+     */
+    function setNavigationIndex(newIndex) {
+        if (newIndex >= 0 && newIndex < modalNavigationState.responses.length) {
+            modalNavigationState.currentIndex = newIndex;
+            modalNavigationState.lastViewedIndex = newIndex;
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Reset navigation state
+     */
+    function resetNavigationState() {
+        modalNavigationState.responses = [];
+        modalNavigationState.currentIndex = 0;
+        modalNavigationState.lastViewedIndex = 0;
+        modalNavigationState.isNavigating = false;
+        console.log('[AI Multiverse] Navigation state reset');
+    }
+
+    // --- NavigationController Class ---
+    /**
+     * NavigationController manages navigation logic for modal responses
+     */
+    class NavigationController {
+        /**
+         * Create a NavigationController
+         * @param {Array} responses - Array of response objects
+         * @param {number} initialIndex - Initial response index
+         */
+        constructor(responses, initialIndex = 0) {
+            this.responses = responses;
+            this.currentIndex = initialIndex;
+        }
+
+        /**
+         * Check if navigation to previous response is possible (with loop)
+         * @returns {boolean} Always true when there are multiple responses
+         */
+        canNavigatePrevious() {
+            return this.responses.length > 1;
+        }
+
+        /**
+         * Check if navigation to next response is possible (with loop)
+         * @returns {boolean} Always true when there are multiple responses
+         */
+        canNavigateNext() {
+            return this.responses.length > 1;
+        }
+
+        /**
+         * Navigate to previous response (with loop)
+         * @returns {Object|null} Previous response object or null if only one response
+         */
+        navigatePrevious() {
+            if (this.responses.length <= 1) {
+                console.warn('[AI Multiverse] Cannot navigate: only one response');
+                return null;
+            }
+            
+            // Loop to last if at first
+            if (this.currentIndex === 0) {
+                this.currentIndex = this.responses.length - 1;
+                console.log('[AI Multiverse] Looped to last:', this.currentIndex);
+            } else {
+                this.currentIndex--;
+                console.log('[AI Multiverse] Navigated to previous:', this.currentIndex);
+            }
+            return this.getCurrentResponse();
+        }
+
+        /**
+         * Navigate to next response (with loop)
+         * @returns {Object|null} Next response object or null if only one response
+         */
+        navigateNext() {
+            if (this.responses.length <= 1) {
+                console.warn('[AI Multiverse] Cannot navigate: only one response');
+                return null;
+            }
+            
+            // Loop to first if at last
+            if (this.currentIndex === this.responses.length - 1) {
+                this.currentIndex = 0;
+                console.log('[AI Multiverse] Looped to first:', this.currentIndex);
+            } else {
+                this.currentIndex++;
+                console.log('[AI Multiverse] Navigated to next:', this.currentIndex);
+            }
+            return this.getCurrentResponse();
+        }
+
+        /**
+         * Get current response object
+         * @returns {Object} Current response object
+         */
+        getCurrentResponse() {
+            return this.responses[this.currentIndex];
+        }
+
+        /**
+         * Get current position information
+         * @returns {Object} Position object with current and total
+         */
+        getPosition() {
+            return {
+                current: this.currentIndex + 1,  // 1-based for display
+                total: this.responses.length
+            };
+        }
+
+        /**
+         * Get response at specific index
+         * @param {number} index - Response index
+         * @returns {Object|null} Response object or null if invalid index
+         */
+        getResponseAt(index) {
+            if (index >= 0 && index < this.responses.length) {
+                return this.responses[index];
+            }
+            return null;
+        }
+    }
+
+    // --- Modal Navigation Functions ---
+    
+    /**
+     * Update modal content with new response
+     * @param {Object} response - Response object
+     */
+    function updateModalContent(response) {
+        console.log('[AI Multiverse] Updating modal content for:', response.provider);
+        
+        // Update header
+        const config = (typeof AI_CONFIG !== 'undefined') ? AI_CONFIG[response.provider] : null;
+        detailIcon.src = config ? config.icon : '';
+        detailName.textContent = config ? t(response.provider) : response.provider;
+        
+        // Update content with fade animation
+        detailText.classList.add('navigating-out');
+        
+        setTimeout(() => {
+            // Use original HTML if available, otherwise display plain text
+            if (response.html) {
+                detailText.innerHTML = response.html;
+                detailText.className = 'detail-body';
+            } else if (response.text) {
+                detailText.textContent = response.text;
+                detailText.className = 'detail-body';
+            } else {
+                detailText.innerHTML = '<p>No content available</p>';
+                detailText.className = 'detail-body';
+            }
+            
+            // Add copy buttons to code blocks (only if using HTML)
+            if (response.html) {
+                addCopyButtonsToCodeBlocks(detailText);
+            }
+            
+            // Fade in
+            detailText.classList.add('navigating-in');
+            setTimeout(() => {
+                detailText.classList.remove('navigating-in');
+            }, 150);
+        }, 150);
+        
+        // Update copy button to copy current response
+        copyDetailBtn.onclick = () => {
+            navigator.clipboard.writeText(response.text).then(() => {
+                copyDetailBtn.textContent = t('copied');
+                setTimeout(() => copyDetailBtn.textContent = t('copy_response'), 1500);
+            });
+        };
+    }
+    
+    /**
+     * Update navigation controls state
+     * @param {NavigationController} controller - Navigation controller instance
+     */
+    function updateNavigationControls(controller) {
+        // Update left arrow
+        if (controller.canNavigatePrevious()) {
+            modalNavLeft.disabled = false;
+            modalNavLeft.classList.remove('hidden');
+        } else {
+            modalNavLeft.disabled = true;
+        }
+        
+        // Update right arrow
+        if (controller.canNavigateNext()) {
+            modalNavRight.disabled = false;
+            modalNavRight.classList.remove('hidden');
+        } else {
+            modalNavRight.disabled = true;
+        }
+        
+        // Hide both arrows if only one response
+        if (controller.responses.length <= 1) {
+            modalNavLeft.classList.add('hidden');
+            modalNavRight.classList.add('hidden');
+        }
+    }
+    
+    /**
+     * Update position indicator
+     * @param {Object} position - Position object with current and total
+     */
+    function updatePositionIndicator(position) {
+        // Update text
+        positionText.textContent = `${position.current} of ${position.total}`;
+        
+        // Update dots
+        positionDots.innerHTML = '';
+        for (let i = 0; i < position.total; i++) {
+            const dot = document.createElement('span');
+            dot.className = 'dot';
+            if (i === position.current - 1) {
+                dot.classList.add('active');
+            }
+            positionDots.appendChild(dot);
+        }
+        
+        // Hide indicator if only one response
+        if (position.total <= 1) {
+            modalPositionIndicator.classList.add('hidden');
+        } else {
+            modalPositionIndicator.classList.remove('hidden');
+        }
+    }
+    
+    /**
+     * Handle navigation click
+     * @param {string} direction - 'prev' or 'next'
+     */
+    function handleNavigationClick(direction) {
+        if (modalNavigationState.isNavigating) {
+            console.log('[AI Multiverse] Navigation in progress, ignoring click');
+            return;
+        }
+        
+        modalNavigationState.isNavigating = true;
+        
+        const controller = new NavigationController(
+            modalNavigationState.responses,
+            modalNavigationState.currentIndex
+        );
+        
+        const newResponse = direction === 'prev' 
+            ? controller.navigatePrevious()
+            : controller.navigateNext();
+        
+        if (newResponse) {
+            modalNavigationState.currentIndex = controller.currentIndex;
+            modalNavigationState.lastViewedIndex = controller.currentIndex;
+            
+            updateModalContent(newResponse);
+            updateNavigationControls(controller);
+            updatePositionIndicator(controller.getPosition());
+        }
+        
+        setTimeout(() => {
+            modalNavigationState.isNavigating = false;
+        }, 200);
+    }
+    
+    /**
+     * Handle keyboard navigation
+     * @param {KeyboardEvent} event - Keyboard event
+     */
+    function handleKeyboardNavigation(event) {
+        // Only handle if modal is open
+        if (!detailModal.classList.contains('active')) return;
+        
+        // Ignore if user is selecting text
+        if (window.getSelection().toString().length > 0) return;
+        
+        // Ignore if user is in an input field
+        if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+        
+        switch(event.key) {
+            case 'ArrowLeft':
+                event.preventDefault();
+                handleNavigationClick('prev');
+                // Visual feedback
+                modalNavLeft.classList.add('keyboard-active');
+                setTimeout(() => modalNavLeft.classList.remove('keyboard-active'), 300);
+                break;
+            case 'ArrowRight':
+                event.preventDefault();
+                handleNavigationClick('next');
+                // Visual feedback
+                modalNavRight.classList.add('keyboard-active');
+                setTimeout(() => modalNavRight.classList.remove('keyboard-active'), 300);
+                break;
+            case 'Escape':
+                event.preventDefault();
+                detailModal.classList.remove('active');
+                break;
+        }
+    }
+    
+    /**
+     * Handle touch start for swipe detection
+     * @param {TouchEvent} event - Touch event
+     */
+    let touchStartX = 0;
+    let touchEndX = 0;
+    const SWIPE_THRESHOLD = 50;
+    
+    function handleTouchStart(event) {
+        // Only handle if modal is open
+        if (!detailModal.classList.contains('active')) return;
+        
+        touchStartX = event.changedTouches[0].screenX;
+    }
+    
+    /**
+     * Handle touch end for swipe detection
+     * @param {TouchEvent} event - Touch event
+     */
+    function handleTouchEnd(event) {
+        // Only handle if modal is open
+        if (!detailModal.classList.contains('active')) return;
+        
+        touchEndX = event.changedTouches[0].screenX;
+        handleSwipe();
+    }
+    
+    /**
+     * Handle swipe gesture
+     */
+    function handleSwipe() {
+        // Ignore if user is selecting text
+        if (window.getSelection().toString().length > 0) return;
+        
+        const swipeDistance = touchEndX - touchStartX;
+        
+        // Check if swipe distance exceeds threshold
+        if (Math.abs(swipeDistance) < SWIPE_THRESHOLD) return;
+        
+        if (swipeDistance > 0) {
+            // Swipe right - go to previous
+            handleNavigationClick('prev');
+        } else {
+            // Swipe left - go to next
+            handleNavigationClick('next');
+        }
+    }
+    
+    // Add event listeners for navigation
+    if (modalNavLeft) {
+        modalNavLeft.addEventListener('click', () => handleNavigationClick('prev'));
+    }
+    if (modalNavRight) {
+        modalNavRight.addEventListener('click', () => handleNavigationClick('next'));
+    }
+    
+    // Add keyboard navigation listener
+    document.addEventListener('keydown', handleKeyboardNavigation);
+    
+    // Add touch/swipe listeners
+    if (detailModal) {
+        detailModal.addEventListener('touchstart', handleTouchStart, { passive: true });
+        detailModal.addEventListener('touchend', handleTouchEnd, { passive: true });
+    }
+
+    // --- Resizable Detail Modal ---
+    let modalResizeState = {
+        isResizing: false,
+        startX: 0,
+        startWidth: 0,
+        minWidth: 600,
+        maxWidth: 0.95 * window.innerWidth,
+        currentWidth: parseInt(localStorage.getItem('detailModalWidth')) || 1400
+    };
+
+    // Initialize modal resize functionality
+    function initModalResize() {
+        const modalContent = document.querySelector('#detailModal .detail-content');
+        console.log('[AI Multiverse] Initializing modal resize, modalContent:', modalContent);
+        
+        if (!modalContent) {
+            console.error('[AI Multiverse] Modal content not found!');
+            return;
+        }
+
+        // Remove existing handles if any
+        const existingHandles = modalContent.querySelectorAll('.modal-resize-handle');
+        existingHandles.forEach(handle => handle.remove());
+        console.log('[AI Multiverse] Removed', existingHandles.length, 'existing handles');
+
+        // Create resize handles with better visibility
+        const resizeHandleLeft = document.createElement('div');
+        resizeHandleLeft.className = 'modal-resize-handle modal-resize-handle-left';
+        resizeHandleLeft.title = '拖拽调节宽度';
+        resizeHandleLeft.setAttribute('data-resize', 'left');
+        
+        const resizeHandleRight = document.createElement('div');
+        resizeHandleRight.className = 'modal-resize-handle modal-resize-handle-right';
+        resizeHandleRight.title = '拖拽调节宽度';
+        resizeHandleRight.setAttribute('data-resize', 'right');
+
+        modalContent.appendChild(resizeHandleLeft);
+        modalContent.appendChild(resizeHandleRight);
+        
+        console.log('[AI Multiverse] Resize handles created and appended');
+        console.log('[AI Multiverse] Left handle:', resizeHandleLeft);
+        console.log('[AI Multiverse] Right handle:', resizeHandleRight);
+
+        // Apply saved width
+        if (modalResizeState.currentWidth) {
+            modalContent.style.width = modalResizeState.currentWidth + 'px';
+            modalContent.style.maxWidth = 'none'; // Override CSS max-width
+            console.log('[AI Multiverse] Applied saved width:', modalResizeState.currentWidth + 'px');
+        }
+
+        // Attach event listeners
+        resizeHandleLeft.addEventListener('mousedown', (e) => startResize(e, 'left'));
+        resizeHandleRight.addEventListener('mousedown', (e) => startResize(e, 'right'));
+        
+        console.log('[AI Multiverse] Event listeners attached to resize handles');
+        
+        // Force a reflow to ensure handles are rendered
+        modalContent.offsetHeight;
+        
+        // Verify handles are visible
+        setTimeout(() => {
+            const leftRect = resizeHandleLeft.getBoundingClientRect();
+            const rightRect = resizeHandleRight.getBoundingClientRect();
+            console.log('[AI Multiverse] Left handle position:', leftRect);
+            console.log('[AI Multiverse] Right handle position:', rightRect);
+            console.log('[AI Multiverse] Left handle computed style:', window.getComputedStyle(resizeHandleLeft));
+        }, 100);
+    }
+
+    function startResize(e, side) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        console.log('[AI Multiverse] Start resize from side:', side);
+        
+        const modalContent = document.querySelector('#detailModal .detail-content');
+        if (!modalContent) {
+            console.error('[AI Multiverse] Modal content not found during resize start');
+            return;
+        }
+        
+        modalResizeState.isResizing = true;
+        modalResizeState.startX = e.clientX;
+        modalResizeState.startWidth = modalContent.offsetWidth;
+        modalResizeState.resizeSide = side;
+
+        console.log('[AI Multiverse] Resize state:', {
+            startX: modalResizeState.startX,
+            startWidth: modalResizeState.startWidth,
+            side: side
+        });
+
+        document.addEventListener('mousemove', handleResize);
+        document.addEventListener('mouseup', stopResize);
+
+        // Add resizing class for visual feedback
+        document.body.classList.add('modal-resizing');
+    }
+
+    function handleResize(e) {
+        if (!modalResizeState.isResizing) return;
+
+        const modalContent = document.querySelector('#detailModal .detail-content');
+        if (!modalContent) return;
+        
+        const deltaX = modalResizeState.resizeSide === 'right'
+            ? e.clientX - modalResizeState.startX
+            : modalResizeState.startX - e.clientX;
+
+        let newWidth = modalResizeState.startWidth + (deltaX * 2); // *2 because we resize from center
+
+        // Constrain width
+        newWidth = Math.max(modalResizeState.minWidth, newWidth);
+        newWidth = Math.min(modalResizeState.maxWidth, newWidth);
+
+        modalContent.style.width = newWidth + 'px';
+        modalContent.style.maxWidth = 'none';
+        modalResizeState.currentWidth = newWidth;
+    }
+
+    function stopResize() {
+        if (!modalResizeState.isResizing) return;
+
+        modalResizeState.isResizing = false;
+        document.removeEventListener('mousemove', handleResize);
+        document.removeEventListener('mouseup', stopResize);
+        document.body.classList.remove('modal-resizing');
+
+        // Save preference
+        localStorage.setItem('detailModalWidth', modalResizeState.currentWidth);
+    }
+
+    // Update max width on window resize
+    window.addEventListener('resize', () => {
+        modalResizeState.maxWidth = 0.95 * window.innerWidth;
+        const modalContent = document.querySelector('#detailModal .detail-content');
+        if (modalContent && modalContent.offsetWidth > modalResizeState.maxWidth) {
+            modalContent.style.width = modalResizeState.maxWidth + 'px';
+        }
+    });
+
+    // --- Input Logic ---
+    promptInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+
+    promptInput.addEventListener('input', () => {
+        promptInput.style.height = 'auto';
+        promptInput.style.height = Math.min(promptInput.scrollHeight, 150) + 'px';
+    });
+
+    sendBtn.addEventListener('click', sendMessage);
+    // 允许用户手动刷新对比结果
+    fetchResponsesBtn.addEventListener('click', fetchResponses);
+
+    // Summarize settings button (in header) - open settings modal
+    if (summarizeSettingsBtn) {
+        summarizeSettingsBtn.addEventListener('click', () => {
+            toggleSummarizeSettingsModal(true);
+        });
+    }
+
+    // Summarize button (next to send button) - manual trigger
+    if (summarizeBtn) {
+        summarizeBtn.addEventListener('click', async () => {
+            // Check if there are responses to summarize
+            const hasResponses = Object.values(lastResponses).some(r => r.status === 'ok');
+            if (!hasResponses) {
+                showStatus(t('summary_empty') || '没有可总结的响应', 'error');
+                return;
+            }
+            
+            // Trigger summarization directly
+            try {
+                await performSummarization();
+            } catch (err) {
+                console.error('[AI Multiverse] Summarization error:', err);
+                showStatus(t('summary_failed') || '总结失败', 'error');
+            }
+        });
+        
+        // Initially disable the button
+        summarizeBtn.disabled = true;
+    }
+
+    // Summarize settings modal events
+    closeSummarizeSettingsBtn.addEventListener('click', () => toggleSummarizeSettingsModal(false));
+    summarizeSettingsCancelBtn.addEventListener('click', () => toggleSummarizeSettingsModal(false));
+
+    summarizeSettingsConfirmBtn.addEventListener('click', async () => {
+        summarizeModel = summarizeModelSelect.value;
+        customSummarizePrompt = summarizePromptInput.value.trim();
+        saveSummarizeSettings();
+
+        toggleSummarizeSettingsModal(false);
+        
+        // Just save settings - user will click the summarize button to trigger
+        showStatus(t('settings_saved') || '设置已保存', 'success');
+    });
+
+    useDefaultPromptBtn.addEventListener('click', () => {
+        const defaultPrompt = currentLang === 'zh-CN' ? DEFAULT_SUMMARIZE_PROMPT_ZH : DEFAULT_SUMMARIZE_PROMPT_EN;
+        summarizePromptInput.value = defaultPrompt;
+    });
+
+    resetPromptBtn.addEventListener('click', () => {
+        summarizePromptInput.value = '';
+        customSummarizePrompt = '';
+    });
+
+    // Close modal on overlay click
+    summarizeSettingsModal.addEventListener('click', (e) => {
+        if (e.target === summarizeSettingsModal) {
+            toggleSummarizeSettingsModal(false);
+        }
+    });
+    launchBtn.addEventListener('click', () => {
+        const providers = getSelectedProviders();
+        if (providers.length === 0) { toggleModal(true); return; }
+        chrome.runtime.sendMessage({ action: 'launch_only_providers', providers });
+    });
+
+    tileBtn.addEventListener('click', () => {
+        const providers = getSelectedProviders();
+        chrome.runtime.sendMessage({ action: 'tile_windows', providers });
+    });
+
+    closeAllBtn.addEventListener('click', () => {
+        // 使用自定义模态框替代原生 confirm
+        toggleCloseAllModal(true);
+    });
+
+    clearHistoryBtn.addEventListener('click', () => {
+        // Load history first to check if it's empty
+        chrome.storage.local.get(['chat_history'], (result) => {
+            const history = result.chat_history || [];
+
+            if (history.length === 0) {
+                showStatus(t('history_empty'), 'info');
+                return;
+            }
+
+            const confirmMessage = t('clear_history_confirm') || `Clear all ${history.length} history entries?`;
+            if (confirm(confirmMessage)) {
+                chrome.storage.local.set({ chat_history: [] }, () => {
+                    renderHistory();
+                    logStatus('System', t('history_cleared'), 'success');
+                });
+            }
+        });
+    });
+
+    // --- Core Functions ---
+
+    function getSelectedProviders() {
+        return AI_PROVIDERS.filter(p => {
+            const el = document.getElementById(p);
+            return el && el.checked;
+        });
+    }
+
+    function saveSelectedProviders() {
+        chrome.storage.local.set({ selected_providers: getSelectedProviders() });
+    }
+
+    function loadSelectedProviders() {
+        chrome.storage.local.get(['selected_providers'], (result) => {
+            if (result.selected_providers) {
+                AI_PROVIDERS.forEach(p => {
+                    const el = document.getElementById(p);
+                    if (el) el.checked = result.selected_providers.includes(p);
+                });
+                updateBadge();
+            }
+        });
+    }
+
+    function updateBadge() {
+        const count = getSelectedProviders().length;
+        selectionBadge.textContent = count;
+        selectionBadge.style.display = count > 0 ? 'flex' : 'none';
+    }
+
+    async function sendMessage() {
+        const text = promptInput.value.trim();
+        if (!text && selectedFiles.length === 0) return;
+
+        const providers = getSelectedProviders();
+        if (providers.length === 0) { toggleModal(true); return; }
+
+        // Reset response completion state when sending new message
+        responseCompletionState = {
+            total: providers.length,
+            completed: 0,
+            allComplete: false
+        };
+        
+        // Reset navigation state when sending new message
+        resetNavigationState();
+        
+        // Disable summarize button when sending new message
+        const summarizeBtnElement = document.getElementById('summarizeBtn');
+        if (summarizeBtnElement) {
+            summarizeBtnElement.disabled = true;
+            summarizeBtnElement.classList.remove('ready'); // 移除就绪状态
+        }
+
+        // Save the question for summarization
+        lastQuestion = text;
+        console.log('[AI Multiverse] 💾 Saved question for summarization:', text.substring(0, 100));
+
+        // Copy files before clearing
+        const filesToSend = selectedFiles.map(f => ({
+            name: f.name,
+            type: f.type,
+            size: f.size,
+            data: f.data
+        }));
+
+        addToHistory(text, providers, filesToSend);
+        
+        // 显示问题到右下角
+        showQuestionInDisplay(text);
+        
+        promptInput.value = '';
+        promptInput.style.height = 'auto';
+
+        // Clear files after copying
+        selectedFiles.forEach(f => {
+            URL.revokeObjectURL(f.data);
+        });
+        selectedFiles = [];
+        renderFilePreview();
+
+        logStatus('System', t('sending'), 'info');
+
+        // Add user message to conversation history (left side)
+        addUserMessageToHistory(text, providers);
+
+        // Add waiting status message (right side)
+        const waitingMessageId = addWaitingStatusToHistory(providers);
+        
+        // 初始化响应网格，显示loading状态的卡片
+        initResponsesGrid(providers);
+
+        chrome.runtime.sendMessage({
+            action: 'broadcast_message',
+            message: text,
+            files: filesToSend,
+            providers: providers
+        });
+
+        // Start monitoring responses
+        console.log('[AI Multiverse] 🎬 Starting response monitoring...');
+        startResponseMonitoring(providers, waitingMessageId);
+    }
+    
+    /**
+     * 初始化响应网格，显示loading状态的卡片
+     */
+    function initResponsesGrid(providers) {
+        responsesGrid.innerHTML = '';
+        providers.forEach(p => {
+            const config = (typeof AI_CONFIG !== 'undefined') ? AI_CONFIG[p] : null;
+            responsesGrid.appendChild(createResponseCard(p, config ? config.name : p, config ? config.icon : '', { status: 'loading' }));
+        });
+    }
+
+    function addToHistory(text, providers, files = []) {
+        chrome.storage.local.get(['chat_history'], (result) => {
+            const history = result.chat_history || [];
+            history.push({ 
+                text, 
+                providers, 
+                files: files.map(f => ({ name: f.name, type: f.type, size: f.size })),
+                timestamp: new Date().toISOString(),
+                responses: {} // 初始化响应存储
+            });
+            if (history.length > 50) history.shift();
+            chrome.storage.local.set({ chat_history: history }, () => renderHistory());
+        });
+    }
+    
+    /**
+     * 保存响应到历史记录
+     */
+    function saveResponsesToHistory(providers, responses) {
+        chrome.storage.local.get(['chat_history'], (result) => {
+            const history = result.chat_history || [];
+            if (history.length === 0) return;
+            
+            // 获取最后一条记录（当前对话）
+            const lastEntry = history[history.length - 1];
+            if (!lastEntry) return;
+            
+            // 格式化响应数据
+            const formattedResponses = {};
+            providers.forEach(provider => {
+                const data = responses[provider];
+                if (data) {
+                    formattedResponses[provider] = {
+                        status: data.status,
+                        text: data.text || '',
+                        html: data.html || '',
+                        error: data.error || '',
+                        length: data.length || 0
+                    };
+                }
+            });
+            
+            // 更新最后一条记录的响应
+            lastEntry.responses = formattedResponses;
+            lastEntry.responsesTimestamp = new Date().toISOString();
+            
+            chrome.storage.local.set({ chat_history: history }, () => {
+                console.log('[AI Multiverse] ✅ Responses saved to history');
+            });
+        });
+    }
+
+    function renderHistory() {
+        chrome.storage.local.get(['chat_history'], (result) => {
+            const history = result.chat_history || [];
+            historyList.innerHTML = '';
+            if (history.length === 0) {
+                const emptyMsg = document.createElement('div');
+                emptyMsg.style.cssText = 'text-align:center; padding:20px; color:var(--text-secondary); font-size:12px;';
+                emptyMsg.textContent = t('no_messages');
+                historyList.appendChild(emptyMsg);
+                return;
+            }
+            history.forEach((entry, index) => {
+                // Validate entry
+                if (!entry || !entry.text) return;
+
+                // Check if this is a summary entry
+                if (entry.type === 'summary') {
+                    // Render summary entry
+                    const config = AI_CONFIG[entry.modelName];
+                    const displayName = config ? config.name : entry.modelName;
+                    
+                    const item = document.createElement('div');
+                    item.className = 'history-item ai-message summary-result';
+                    
+                    // 点击打开详情页
+                    item.onclick = (e) => {
+                        // 如果点击的是按钮，不触发卡片点击
+                        if (e.target.closest('.history-actions')) return;
+                        // 显示总结详情
+                        showSummaryDetail(entry, displayName);
+                    };
+                    
+                    // Create header
+                    const header = document.createElement('div');
+                    header.className = 'summary-header';
+                    header.innerHTML = `<span class="summary-title">✨ 由 ${displayName} 总结生成</span>`;
+                    
+                    // Create content area with Markdown rendering
+                    const content = document.createElement('div');
+                    content.className = 'summary-content markdown-content';
+                    content.innerHTML = renderMarkdown(entry.text);
+                    
+                    // Add copy buttons to code blocks
+                    addCopyButtonsToCodeBlocks(content);
+                    
+                    // Create footer with actions
+                    const footer = document.createElement('div');
+                    footer.className = 'history-footer';
+                    
+                    const meta = document.createElement('span');
+                    meta.className = 'history-meta';
+                    meta.textContent = formatDateTime(entry.timestamp || Date.now(), 'time');
+                    
+                    const actions = document.createElement('div');
+                    actions.className = 'history-actions';
+                    
+                    // Copy button
+                    const copyBtn = document.createElement('button');
+                    copyBtn.className = 'history-action-btn';
+                    copyBtn.title = t('copy_response') || '复制';
+                    copyBtn.innerHTML = '📋';
+                    copyBtn.onclick = async () => {
+                        try {
+                            await navigator.clipboard.writeText(entry.text);
+                            copyBtn.innerHTML = '✓';
+                            setTimeout(() => copyBtn.innerHTML = '📋', 2000);
+                        } catch (err) {
+                            console.error('Copy failed:', err);
+                        }
+                    };
+                    
+                    // Delete button
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'history-action-btn delete-btn';
+                    deleteBtn.title = t('delete_message');
+                    deleteBtn.innerHTML = '🗑️';
+                    deleteBtn.onclick = () => deleteMessage(index);
+                    
+                    actions.appendChild(copyBtn);
+                    actions.appendChild(deleteBtn);
+                    footer.appendChild(meta);
+                    footer.appendChild(actions);
+                    
+                    item.appendChild(header);
+                    item.appendChild(content);
+                    item.appendChild(footer);
+                    
+                    historyList.appendChild(item);
+                    return;
+                }
+
+                // Regular user message entry
+                const item = document.createElement('div');
+                item.className = 'history-item';
+
+                // 文本内容
+                const txt = document.createElement('div');
+                txt.className = 'history-text';
+                txt.textContent = entry.text;
+
+                // 底部信息栏
+                const footer = document.createElement('div');
+                footer.className = 'history-footer';
+
+                // 时间元数据
+                const timestamp = entry.timestamp || Date.now();
+                const time = formatDateTime(timestamp, 'time');
+                const providerCount = (entry.providers && entry.providers.length) || 0;
+                const metaText = t('time_format').replace('{count}', providerCount);
+                const meta = document.createElement('span');
+                meta.className = 'history-meta';
+                meta.textContent = `${time} ${metaText}`;
+
+                // 操作按钮组
+                const actions = document.createElement('div');
+                actions.className = 'history-actions';
+
+                // 重发按钮
+                const resendBtn = document.createElement('button');
+                resendBtn.className = 'history-action-btn';
+                resendBtn.title = t('resend_message');
+                resendBtn.innerHTML = '🔄';
+                resendBtn.onclick = () => resendMessage(entry);
+
+                // 编辑按钮
+                const editBtn = document.createElement('button');
+                editBtn.className = 'history-action-btn';
+                editBtn.title = t('edit_message');
+                editBtn.innerHTML = '✏️';
+                editBtn.onclick = () => editMessage(entry, index);
+
+                // 删除按钮
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'history-action-btn delete-btn';
+                deleteBtn.title = t('delete_message');
+                deleteBtn.innerHTML = '🗑️';
+                deleteBtn.onclick = () => deleteMessage(index);
+
+                // 添加三个核心操作按钮
+                actions.appendChild(resendBtn);
+                actions.appendChild(editBtn);
+                actions.appendChild(deleteBtn);
+
+                footer.appendChild(meta);
+                footer.appendChild(actions);
+
+                item.appendChild(txt);
+                item.appendChild(footer);
+                historyList.appendChild(item);
+            });
+            setTimeout(() => { historyList.scrollTop = historyList.scrollHeight; }, 50);
+        });
+    }
+
+    // --- History Management Functions ---
+
+    // 显示历史详情
+    function showHistoryDetail(entry) {
+        // 创建详情模态框
+        const modal = document.createElement('div');
+        modal.className = 'history-detail-modal';
+        modal.innerHTML = `
+            <div class="modal-overlay" onclick="this.parentElement.remove()"></div>
+            <div class="modal-content history-detail-content">
+                <div class="modal-header">
+                    <h3>${t('history_detail_title')}</h3>
+                    <button class="modal-close-btn" onclick="this.parentElement.parentElement.parentElement.remove()">×</button>
+                </div>
+                <div class="history-detail-body">
+                    <div class="history-question">
+                        <h4>${t('question')}</h4>
+                        <div class="history-question-text">${sanitizeText(entry.text)}</div>
+                    </div>
+                    <div class="history-responses">
+                        <h4>${t('responses')}</h4>
+                        <div id="history-responses-container"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="secondary-btn-long" onclick="this.parentElement.parentElement.parentElement.remove()">${t('close')}</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // 动态生成响应内容
+        const responsesContainer = modal.querySelector('#history-responses-container');
+        if (entry.responses && Object.keys(entry.responses).length > 0) {
+            Object.entries(entry.responses).forEach(([provider, data]) => {
+                const responseItem = document.createElement('div');
+                responseItem.className = 'history-response-item';
+
+                const providerDiv = document.createElement('div');
+                providerDiv.className = 'history-response-provider';
+                providerDiv.textContent = provider;
+
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'history-response-content';
+                contentDiv.textContent = data.status === 'ok' ? data.content : (data.error || t('error'));
+
+                responseItem.appendChild(providerDiv);
+                responseItem.appendChild(contentDiv);
+
+                if (data.status === 'ok') {
+                    const copyBtn = document.createElement('button');
+                    copyBtn.className = 'copy-response-btn';
+                    copyBtn.textContent = t('copy');
+                    copyBtn.onclick = async () => {
+                        try {
+                            await navigator.clipboard.writeText(data.content);
+                            copyBtn.textContent = t('copied');
+                            setTimeout(() => copyBtn.textContent = t('copy'), 2000);
+                        } catch (err) {
+                            console.error('Copy failed:', err);
+                        }
+                    };
+                    responseItem.appendChild(copyBtn);
+                }
+
+                responsesContainer.appendChild(responseItem);
+            });
+        } else {
+            const noResponsesDiv = document.createElement('div');
+            noResponsesDiv.className = 'no-responses';
+            noResponsesDiv.textContent = t('no_responses');
+            responsesContainer.appendChild(noResponsesDiv);
+        }
+    }
+
+    // 重发消息
+    function resendMessage(entry) {
+        // 填充输入框
+        promptInput.value = entry.text;
+        promptInput.focus();
+
+        // 恢复选中的AI平台
+        entry.providers.forEach(provider => {
+            const checkbox = document.getElementById(provider);
+            if (checkbox) checkbox.checked = true;
+        });
+
+        // 提示用户
+        showNotification(t('message_reloaded'), 'info');
+    }
+
+    // 编辑消息
+    function editMessage(entry, index) {
+        const newText = prompt(t('edit_message_prompt'), entry.text);
+        if (newText !== null && newText.trim() !== '') {
+            chrome.storage.local.get(['chat_history'], (result) => {
+                const history = result.chat_history || [];
+                if (history[index]) {
+                    history[index].text = newText.trim();
+                    history[index].timestamp = Date.now();
+                    chrome.storage.local.set({ chat_history: history }, () => {
+                        renderHistory();
+                        showNotification(t('message_edited'), 'success');
+                    });
+                }
+            });
+        }
+    }
+
+    // 删除消息
+    function deleteMessage(index) {
+        if (confirm(t('confirm_delete_message'))) {
+            chrome.storage.local.get(['chat_history'], (result) => {
+                const history = result.chat_history || [];
+                history.splice(index, 1);
+                chrome.storage.local.set({ chat_history: history }, () => {
+                    renderHistory();
+                    showNotification(t('message_deleted'), 'success');
+                });
+            });
+        }
+    }
+
+    // XSS防护函数
+    function sanitizeText(text) {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
+    }
+
+    async function fetchResponses() {
+        const providers = getSelectedProviders();
+        if (providers.length === 0) return;
+        fetchResponsesBtn.disabled = true;
+        const span = fetchResponsesBtn.querySelector('span');
+        if (span) span.textContent = t('fetching');
+        responsesGrid.innerHTML = '';
+        providers.forEach(p => {
+            const config = (typeof AI_CONFIG !== 'undefined') ? AI_CONFIG[p] : null;
+            responsesGrid.appendChild(createResponseCard(p, config ? config.name : p, config ? config.icon : '', { status: 'loading' }));
+        });
+
+        chrome.runtime.sendMessage({ action: 'fetch_all_responses', providers }, (result) => {
+            fetchResponsesBtn.disabled = false;
+            const respSpan = fetchResponsesBtn.querySelector('span');
+            if (respSpan) respSpan.textContent = t('fetch_responses');
+            if (result && result.status === 'ok') {
+                lastResponses = result.responses;
+                renderResponses(result.responses, providers);
+            }
+        });
+    }
+
+    function renderResponses(responses, providers) {
+        responsesGrid.innerHTML = '';
+        providers.forEach(p => {
+            const data = responses[p] || { status: 'error', error: t('missing') };
+            const config = (typeof AI_CONFIG !== 'undefined') ? AI_CONFIG[p] : null;
+            // 获取该provider的完成状态
+            const history = providerResponseHistory[p];
+            // 如果有历史记录则使用记录的完成状态，否则如果有内容则视为已完成（首次加载时）
+            let isCompleted = false;
+            if (history) {
+                isCompleted = history.isCompleted;
+            } else if (data.status === 'ok') {
+                // 首次加载且有内容，视为已完成
+                isCompleted = true;
+            }
+            const card = createResponseCard(p, config ? config.name : p, config ? config.icon : '', data, isCompleted);
+            if (data.status === 'ok') card.onclick = () => showDetail(p, data);
+            responsesGrid.appendChild(card);
+        });
+
+        // Update response completion state
+        responseCompletionState.total = providers.length;
+        // Count completed responses (both ok and error are considered complete)
+        responseCompletionState.completed = providers.filter(p => {
+            const data = responses[p];
+            return data && (data.status === 'ok' || data.status === 'error');
+        }).length;
+        
+        const wasComplete = responseCompletionState.allComplete;
+        responseCompletionState.allComplete = responseCompletionState.completed === responseCompletionState.total;
+
+        console.log('[AI Multiverse] Response completion state:', {
+            total: responseCompletionState.total,
+            completed: responseCompletionState.completed,
+            allComplete: responseCompletionState.allComplete,
+            hasSuccessful: Object.values(responses).some(r => r && r.status === 'ok')
+        });
+
+        // Manual summarization only - removed auto-trigger
+        // User must click the summarize button to trigger summarization
+
+        // Legacy: Check if we have successful responses to enable old summarize button
+        if (summarizeBtn) {
+            const hasSuccessfulResponses = Object.values(responses).some(r => r.status === 'ok');
+            summarizeBtn.style.display = hasSuccessfulResponses ? 'flex' : 'none';
+        }
+
+        // 渲染完响应后，根据当前窗口宽度设置布局模式
+        updateResponsesLayout();
+    }
+
+    function createResponseCard(id, name, icon, data, isCompleted = false) {
+        const card = document.createElement('div');
+        card.className = 'response-card';
+        card.dataset.provider = id; // 用于标识卡片
+        
+        const header = document.createElement('div');
+        header.className = 'response-card-header';
+        const info = document.createElement('div');
+        info.className = 'response-card-info';
+        if (icon) {
+            const img = document.createElement('img');
+            img.src = icon;
+            img.className = 'provider-icon-img';
+            img.onerror = () => { img.style.display = 'none'; };
+            info.appendChild(img);
+        }
+        
+        // 添加模型名称和状态标记
+        let statusBadge = '';
+        if (data.status === 'loading') {
+            statusBadge = '<span class="response-status-badge loading">' + (t('waiting_responses') || '等待中') + '</span>';
+        } else if (data.status === 'ok' && isCompleted) {
+            // 只有真正完成时才显示已完成
+            statusBadge = '<span class="response-status-badge completed">' + (t('completed') || '已完成') + '</span>';
+        } else if (data.status === 'ok' && !isCompleted) {
+            // 正在生成中
+            statusBadge = '<span class="response-status-badge loading">' + (t('generating') || '生成中...') + '</span>';
+        } else if (data.status === 'error') {
+            statusBadge = '<span class="response-status-badge error">' + (t('failed') || '失败') + '</span>';
+        }
+        info.innerHTML += `<span>${name}</span> ${statusBadge}`;
+        
+        const badge = document.createElement('div');
+        badge.className = 'response-char-count';
+        if (data.status === 'ok' && data.text) {
+            badge.textContent = `${data.text.length} ${t('characters')}`;
+        }
+        header.appendChild(info);
+        header.appendChild(badge);
+        const body = document.createElement('div');
+        body.className = 'response-card-body markdown-content';
+        if (data.status === 'loading') {
+            body.innerHTML = `<span class="loading-text">${t('extracting') || '提取中...'}</span>`;
+        } else if (data.status === 'ok') {
+            // Use original HTML if available, otherwise display plain text
+            if (data.html) {
+                body.innerHTML = data.html;
+            } else if (data.text) {
+                // Display plain text without Markdown rendering
+                body.textContent = data.text;
+            }
+            // Add copy buttons to code blocks (only if using HTML)
+            if (data.html) {
+                addCopyButtonsToCodeBlocks(body);
+            }
+        } else {
+            body.innerHTML = `<span style="color:var(--error)">${data.error || t('error')}</span>`;
+        }
+        card.appendChild(header);
+        card.appendChild(body);
+        return card;
+    }
+
+    copyAllBtn.onclick = () => {
+        let text = '=== Comparison ===\n\n';
+        for (const [id, data] of Object.entries(lastResponses)) {
+            if (data.status === 'ok') text += `━ ${id} ━\n${data.text}\n\n`;
+        }
+        navigator.clipboard.writeText(text).then(() => {
+            const span = copyAllBtn.querySelector('span');
+            if (span) span.textContent = t('copied');
+            setTimeout(() => {
+                if (span) span.textContent = t('copy_all');
+            }, 1500);
+        });
+    };
+
+    function logStatus(provider, message, type = 'info') {
+        const dot = document.querySelector('.status-dot');
+        dot.style.backgroundColor = type === 'error' ? 'var(--error)' : 'var(--accent)';
+        statusPanel.style.width = '100%';
+        setTimeout(() => { statusPanel.style.width = '2px'; }, 2000);
+    }
+
+    // Alias for showStatus (used in summarization code)
+    function showStatus(message, type = 'info') {
+        logStatus('System', message, type);
+    }
+
+    // --- Theme Functions ---
+
+    function loadTheme() {
+        chrome.storage.local.get(['theme'], (result) => {
+            currentTheme = result.theme || 'dark';
+            applyTheme(currentTheme);
+        });
+    }
+
+    function toggleTheme() {
+        currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        chrome.storage.local.set({ theme: currentTheme });
+        applyTheme(currentTheme);
+    }
+
+    function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+
+        // Update theme toggle icon
+        const sunIcon = document.querySelector('.theme-icon-sun');
+        const moonIcon = document.querySelector('.theme-icon-moon');
+
+        if (theme === 'dark') {
+            sunIcon.style.display = 'none';
+            moonIcon.style.display = 'block';
+        } else {
+            sunIcon.style.display = 'block';
+            moonIcon.style.display = 'none';
+        }
+    }
+
+    // --- Language Functions ---
+
+    function loadLanguage() {
+        chrome.storage.local.get(['lang'], (result) => {
+            currentLang = result.lang || 'zh-CN';
+            setLanguage(currentLang);
+            applyLanguage();
+        });
+    }
+
+    function toggleLanguage() {
+        currentLang = currentLang === 'en' ? 'zh-CN' : 'en';
+        chrome.storage.local.set({ lang: currentLang });
+        setLanguage(currentLang);
+        applyLanguage();
+
+        // Notify background script about language change
+        chrome.runtime.sendMessage({
+            action: 'language_changed',
+            lang: currentLang
+        }).catch(() => { }); // Ignore errors if background worker is not ready
+    }
+
+    function applyLanguage() {
+        const langLabel = currentLang === 'zh-CN' ? '中文' : 'EN';
+        if (langBadge) langBadge.textContent = langLabel;
+
+        // Update all elements with data-i18n attribute
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+            const key = el.getAttribute('data-i18n');
+            const translation = t(key);
+            el.textContent = translation;
+        });
+
+        // Update placeholders with data-i18n-placeholder attribute
+        document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+            const key = el.getAttribute('data-i18n-placeholder');
+            const translation = t(key);
+            el.placeholder = translation;
+        });
+
+        // Update titles/tooltips with data-i18n-title attribute
+        document.querySelectorAll('[data-i18n-title]').forEach(el => {
+            const key = el.getAttribute('data-i18n-title');
+            const translation = t(key);
+            el.title = translation;
+        });
+
+        // Update placeholders
+        const promptPlaceholder = t('ask_anything');
+        if (promptInput) promptInput.placeholder = promptPlaceholder;
+
+        // Update button labels that have special handling
+        updateButtonLabels();
+
+        // Re-render history to update language
+        renderHistory();
+    }
+
+    function updateButtonLabels() {
+        // Update action pills
+        const attachSpan = attachFileBtn?.querySelector('span');
+        if (attachSpan) attachSpan.textContent = t('attach_file');
+        // Update send button
+        const sendSpan = sendBtn?.querySelector('span');
+        if (sendSpan) sendSpan.textContent = t('send');
+
+        // Update action pills
+        if (attachSpan) attachSpan.textContent = t('attach_file');
+
+        const launchSpan = launchBtn?.querySelector('span');
+        if (launchSpan) launchSpan.textContent = t('open');
+
+        const tileSpan = tileBtn?.querySelector('span');
+        if (tileSpan) tileSpan.textContent = t('tile');
+
+        const closeSpan = closeAllBtn?.querySelector('span');
+        if (closeSpan) closeSpan.textContent = t('close');
+
+        // Update clear history button
+        if (clearHistoryBtn) {
+            const svg = clearHistoryBtn.querySelector('svg');
+            clearHistoryBtn.innerHTML = '';
+            clearHistoryBtn.appendChild(svg);
+            clearHistoryBtn.appendChild(document.createTextNode(' ' + t('clear_all')));
+        }
+
+        // Update fetch responses button
+        const fetchSpan = fetchResponsesBtn?.querySelector('span');
+        if (fetchSpan) fetchSpan.textContent = t('fetch_responses');
+
+        // Update copy all button
+        const copySpan = copyAllBtn?.querySelector('span');
+        if (copySpan) copySpan.textContent = t('copy_all');
+
+        // Update summarize button (legacy in toolbar)
+        const summarizeSpan = summarizeBtn?.querySelector('span');
+        if (summarizeSpan) summarizeSpan.textContent = t('summarize');
+
+        // Update close all modal
+        const modalTitle = document.querySelector('#closeAllModal .modal-title h3');
+        if (modalTitle) modalTitle.textContent = t('close_all_title');
+
+        const modalDesc = document.querySelector('#closeAllModal .modal-title p');
+        if (modalDesc) modalDesc.textContent = t('close_all_desc');
+
+        const modalBody = document.querySelector('#closeAllModal .confirm-body p');
+        if (modalBody) modalBody.textContent = t('close_all_warning');
+
+        const confirmBtn = document.querySelector('#closeAllConfirmBtn');
+        if (confirmBtn) confirmBtn.textContent = t('confirm');
+
+        const cancelBtn = document.querySelector('#closeAllCancelBtn');
+        if (cancelBtn) cancelBtn.textContent = t('cancel');
+
+        // Update models modal
+        const modelsTitle = document.querySelector('#modelsModal .modal-title h3');
+        if (modelsTitle) modelsTitle.textContent = t('models_title');
+
+        const modelsDesc = document.querySelector('#modelsModal .modal-title p');
+        if (modelsDesc) modelsDesc.textContent = t('select_recipients');
+
+        const confirmModelsBtn = document.getElementById('confirmModelsBtn');
+        if (confirmModelsBtn) confirmModelsBtn.textContent = t('confirm');
+
+        // Update detail modal
+        const copyDetailBtn = document.getElementById('copyDetailBtn');
+        if (copyDetailBtn) copyDetailBtn.textContent = t('copy_response');
+
+        // Update summarize settings modal
+        const summarizeTitle = document.querySelector('#summarizeSettingsModal .modal-title h3');
+        if (summarizeTitle) summarizeTitle.textContent = t('summarize_settings_title');
+
+        const summarizeDesc = document.querySelector('#summarizeSettingsModal .modal-title p');
+        if (summarizeDesc) summarizeDesc.textContent = t('summarize_settings_subtitle');
+
+        const summarizeLabel = document.querySelector('#summarizeSettingsModal .summarize-setting-group label');
+        if (summarizeLabel) summarizeLabel.textContent = t('summarize_model_label');
+
+        const promptLabel = document.querySelectorAll('#summarizeSettingsModal .summarize-setting-group label')[1];
+        if (promptLabel) promptLabel.textContent = t('summarize_prompt_label');
+
+        const useDefaultBtn = document.getElementById('useDefaultPromptBtn');
+        if (useDefaultBtn) useDefaultBtn.textContent = t('use_defaultPrompt');
+
+        const resetPromptBtn = document.getElementById('resetPromptBtn');
+        if (resetPromptBtn) resetPromptBtn.textContent = t('reset_prompt');
+
+        const confirmSummarizeBtn = document.getElementById('summarizeSettingsConfirmBtn');
+        if (confirmSummarizeBtn) confirmSummarizeBtn.textContent = t('confirm');
+
+        const cancelSummarizeBtn = document.getElementById('summarizeSettingsCancelBtn');
+        if (cancelSummarizeBtn) cancelSummarizeBtn.textContent = t('cancel');
+
+        // All tooltips/titles are now handled by applyLanguage() via data-i18n-title
+
+        // Update provider names
+        updateProviderNames();
+    }
+
+    function updateProviderNames() {
+        const providerMap = {
+            'gemini': 'gemini',
+            'grok': 'grok',
+            'kimi': 'kimi',
+            'deepseek': 'deepseek',
+            'chatgpt': 'chatgpt',
+            'qwen': 'qwen',
+            'yuanbao': 'yuanbao'
+        };
+
+        for (const [id, key] of Object.entries(providerMap)) {
+            const providerNameEl = document.querySelector(`#${id} + .card-content .provider-name`);
+            if (providerNameEl) {
+                providerNameEl.textContent = t(key);
+            }
+        }
+    }
+
+    // --- Browse Mode Functions ---
+
+    // --- File Upload Functions ---
+
+    async function handleFileSelect(event) {
+        const files = Array.from(event.target.files);
+        if (files.length === 0) return;
+
+        // Check file sizes
+        for (const file of files) {
+            if (file.size > MAX_FILE_SIZE) {
+                alert(t('file_too_large', { max: (MAX_FILE_SIZE / 1024 / 1024).toFixed(0) }));
+                return;
+            }
+        }
+
+        // Check total size
+        const currentTotalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+        const newTotalSize = currentTotalSize + files.reduce((sum, f) => sum + f.size, 0);
+        if (newTotalSize > MAX_TOTAL_SIZE) {
+            alert(t('file_size_too_large', { max: (MAX_TOTAL_SIZE / 1024 / 1024).toFixed(0) }));
+            return;
+        }
+
+        // Read files and store as data URLs using Promises
+        for (const file of files) {
+            try {
+                const fileData = await readFileAsDataURL(file);
+                selectedFiles.push(fileData);
+                renderFilePreview();
+            } catch (error) {
+                console.error('Failed to read file:', file.name, error);
+                alert(t('err_file_read_failed', { filename: file.name }));
+            }
+        }
+
+        // Clear input to allow selecting the same file again
+        fileInput.value = '';
+    }
+
+    /**
+     * Helper function to read a file as data URL using Promise
+     */
+    function readFileAsDataURL(file) {
+        return new Promise((resolve, reject) => {
+            try {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    resolve({
+                        name: file.name,
+                        type: file.type,
+                        size: file.size,
+                        data: e.target.result
+                    });
+                };
+                reader.onerror = () => reject(new Error('Failed to read file data'));
+                reader.readAsDataURL(file);
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
+
+    function renderFilePreview() {
+
+        if (selectedFiles.length === 0) {
+            filePreview.style.display = 'none';
+            return;
+        }
+
+        filePreview.style.display = 'block';
+        filePreviewList.innerHTML = '';
+
+        selectedFiles.forEach((file, index) => {
+            const item = document.createElement('div');
+            item.className = 'file-preview-item';
+
+            // Determine icon
+            if (file.type.startsWith('image/')) {
+                const img = document.createElement('img');
+                img.src = file.data;
+                img.alt = file.name;
+                item.appendChild(img);
+            } else {
+                const icon = document.createElement('div');
+                icon.className = 'file-icon';
+                const ext = file.name.split('.').pop().toUpperCase();
+                icon.textContent = ext.length > 4 ? ext.substring(0, 3) : ext;
+                item.appendChild(icon);
+            }
+
+            // File name and size
+            const info = document.createElement('div');
+            info.innerHTML = `
+                <div class="file-name">${file.name}</div>
+                <div class="file-size">${formatFileSize(file.size)}</div>
+            `;
+            item.appendChild(info);
+
+            // Remove button
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'file-remove';
+            removeBtn.textContent = '×';
+            removeBtn.title = t('file_remove');
+            removeBtn.onclick = () => removeFile(index);
+            item.appendChild(removeBtn);
+
+            filePreviewList.appendChild(item);
+        });
+    }
+
+    function removeFile(index) {
+        selectedFiles.splice(index, 1);
+        renderFilePreview();
+    }
+
+    function clearAllFiles() {
+        selectedFiles = [];
+        renderFilePreview();
+    }
+
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    // === Summarize Functions ===
+
+    /**
+     * Toggle summarize settings modal
+     */
+    function toggleSummarizeSettingsModal(show) {
+        if (show) {
+            // Load current settings
+            summarizeModelSelect.value = summarizeModel;
+            summarizePromptInput.value = customSummarizePrompt;
+
+            // If no custom prompt, pre-fill with default
+            if (!customSummarizePrompt) {
+                const defaultPrompt = currentLang === 'zh-CN' ? DEFAULT_SUMMARIZE_PROMPT_ZH : DEFAULT_SUMMARIZE_PROMPT_EN;
+                summarizePromptInput.value = defaultPrompt;
+            }
+
+            summarizeSettingsModal.style.display = 'flex';
+        } else {
+            summarizeSettingsModal.style.display = 'none';
+        }
+    }
+
+    /**
+     * Save summarize settings to chrome.storage
+     */
+    function saveSummarizeSettings() {
+        chrome.storage.local.set({
+            summarizeModel: summarizeModel,
+            customSummarizePrompt: customSummarizePrompt
+        });
+    }
+
+    /**
+     * Load summarize settings from chrome.storage
+     */
+    function loadSummarizeSettings() {
+        chrome.storage.local.get(['summarizeModel', 'customSummarizePrompt'], (result) => {
+            if (result.summarizeModel) {
+                summarizeModel = result.summarizeModel;
+                summarizeModelSelect.value = summarizeModel;
+            }
+            if (result.customSummarizePrompt) {
+                customSummarizePrompt = result.customSummarizePrompt;
+            }
+        });
+    }
+
+    /**
+     * Perform summarization
+     */
+    async function performSummarization() {
+        console.log('[AI Multiverse] 📝 performSummarization() called');
+        console.log('[AI Multiverse] isSummarizing:', isSummarizing);
+        console.log('[AI Multiverse] lastResponses keys:', Object.keys(lastResponses));
+        console.log('[AI Multiverse] lastQuestion:', lastQuestion?.substring(0, 100));
+        
+        if (isSummarizing) {
+            console.log('[AI Multiverse] Already summarizing, skipping...');
+            return;
+        }
+
+        // Check we have responses
+        const successfulResponses = Object.entries(lastResponses).filter(([_, data]) => data.status === 'ok');
+        console.log('[AI Multiverse] Successful responses count:', successfulResponses.length);
+        
+        if (successfulResponses.length === 0) {
+            console.error('[AI Multiverse] No successful responses found');
+            showStatus(t('summary_empty'), 'error');
+            return;
+        }
+
+        // Get the original question from memory or history
+        let originalQuestion = lastQuestion?.trim();
+        
+        // If no question in memory, try to get from history
+        if (!originalQuestion) {
+            console.log('[AI Multiverse] No question in memory, retrieving from history...');
+            try {
+                const result = await new Promise((resolve) => {
+                    chrome.storage.local.get(['chat_history'], resolve);
+                });
+                const history = result.chat_history || [];
+                console.log('[AI Multiverse] Chat history length:', history.length);
+                
+                // Find the last entry (most recent question)
+                // History entries have format: { text, providers, files, timestamp }
+                if (history.length > 0) {
+                    const lastEntry = history[history.length - 1];
+                    if (lastEntry && lastEntry.text) {
+                        originalQuestion = lastEntry.text.trim();
+                        console.log('[AI Multiverse] Found question from history:', originalQuestion.substring(0, 100));
+                    }
+                }
+            } catch (error) {
+                console.error('[AI Multiverse] Error retrieving history:', error);
+            }
+        }
+        
+        console.log('[AI Multiverse] Original question length:', originalQuestion?.length);
+        
+        if (!originalQuestion) {
+            console.error('[AI Multiverse] No question found');
+            showStatus(t('summary_empty') + ' (no question found)', 'error');
+            return;
+        }
+
+        // 备份当前响应（在发送总结请求之前）
+        const originalResponsesBackup = JSON.parse(JSON.stringify(lastResponses));
+        console.log('[AI Multiverse] 📦 Backed up original responses:', Object.keys(originalResponsesBackup));
+
+        isSummarizing = true;
+        console.log('[AI Multiverse] ✅ Set isSummarizing = true');
+        
+        // Add loading message to conversation history
+        const loadingMessageId = addSummaryLoadingToHistory();
+        console.log('[AI Multiverse] Added loading message:', loadingMessageId);
+
+        // Build prompt with all responses
+        const currentPrompt = customSummarizePrompt ||
+                              (currentLang === 'zh-CN' ? DEFAULT_SUMMARIZE_PROMPT_ZH : DEFAULT_SUMMARIZE_PROMPT_EN);
+
+        const questionText = `\n\n## ${currentLang === 'zh-CN' ? '原始问题' : 'Original Question'}\n\n${originalQuestion}\n`;
+
+        const responsesText = successfulResponses.map(([provider, data]) => {
+            const config = AI_CONFIG[provider];
+            const name = config ? config.name : provider;
+            return `\n\n## ${currentLang === 'zh-CN' ? '来自' : 'Response from'} ${name} (${provider})\n\n${data.text}`;
+        }).join('\n');
+
+        const fullPrompt = `${currentPrompt}\n${questionText}\n${currentLang === 'zh-CN' ? '=== 以下是各AI的回答 ===' : '=== AI Responses Below ==='}\n${responsesText}`;
+        
+        console.log('[AI Multiverse] 📊 Full prompt constructed:');
+        console.log('  - Prompt template length:', currentPrompt.length);
+        console.log('  - Question length:', questionText.length);
+        console.log('  - Responses text length:', responsesText.length);
+        console.log('  - Total prompt length:', fullPrompt.length);
+        console.log('  - First 300 chars:', fullPrompt.substring(0, 300));
+        console.log('  - Last 300 chars:', fullPrompt.substring(fullPrompt.length - 300));
+        console.log('  - Responses included:', successfulResponses.map(([p]) => p).join(', '));
+
+        const resetSummarizeState = () => {
+            isSummarizing = false;
+            console.log('[AI Multiverse] Summarize state reset');
+        };
+
+        try {
+            // Open the summarization model tab if not already opened
+            const config = AI_CONFIG[summarizeModel];
+            if (!config) {
+                throw new Error(`Summary model ${summarizeModel} not configured`);
+            }
+            console.log('[AI Multiverse] Using summary model:', summarizeModel, config.name);
+
+            // Send message to background to open and prompt the model
+            console.log('[AI Multiverse] 📤 Sending summarize_responses message to background...');
+            
+            // IMPORTANT: Before sending, capture the current response to detect changes
+            let previousResponseText = '';
+            let previousResponseLength = 0;
+            try {
+                const preCheckResult = await new Promise((resolve) => {
+                    chrome.runtime.sendMessage({
+                        action: 'fetch_all_responses',
+                        providers: [summarizeModel]
+                    }, resolve);
+                });
+                if (preCheckResult && preCheckResult.status === 'ok') {
+                    const preData = preCheckResult.responses[summarizeModel];
+                    if (preData && preData.text) {
+                        previousResponseText = preData.text;
+                        previousResponseLength = preData.text.length;
+                        console.log('[AI Multiverse] 📸 Captured previous response length:', previousResponseLength);
+                    }
+                }
+            } catch (err) {
+                console.warn('[AI Multiverse] Could not capture previous response:', err);
+            }
+            
+            chrome.runtime.sendMessage({
+                action: 'summarize_responses',
+                provider: summarizeModel,
+                prompt: fullPrompt
+            }, async (result) => {
+                console.log('[AI Multiverse] 📥 Summarize send result:', result);
+
+                if (result && result.status === 'ok') {
+                    showStatus(t('summary_sent') || '总结请求已发送', 'success');
+                    
+                    // Wait for AI to generate response (polling mechanism)
+                    console.log('[AI Multiverse] Starting to poll for summary result...');
+                    console.log('[AI Multiverse] Will detect NEW response (different from previous)');
+                    let pollAttempts = 0;
+                    const maxPollAttempts = 120; // Poll for up to 2 minutes (longer for summary)
+                    const pollInterval = 1000; // Poll every 1 second
+                    
+                    const pollForSummary = async () => {
+                        pollAttempts++;
+                        console.log(`[AI Multiverse] Poll attempt ${pollAttempts}/${maxPollAttempts}`);
+                        
+                        try {
+                            // Fetch the response from the summarization model
+                            const fetchResult = await new Promise((resolve) => {
+                                chrome.runtime.sendMessage({
+                                    action: 'fetch_all_responses',
+                                    providers: [summarizeModel]
+                                }, resolve);
+                            });
+                            
+                            if (fetchResult && fetchResult.status === 'ok') {
+                                const summaryData = fetchResult.responses[summarizeModel];
+                                console.log('[AI Multiverse] Summary data status:', summaryData?.status, 'text length:', summaryData?.text?.length);
+                                
+                                if (summaryData && summaryData.status === 'ok' && summaryData.text) {
+                                    const currentText = summaryData.text;
+                                    const currentLength = currentText.length;
+                                    
+                                    // Check if this is a NEW response (different from previous)
+                                    const isNewResponse = currentText !== previousResponseText && currentLength > 100;
+                                    const hasGrown = currentLength > previousResponseLength + 50; // At least 50 chars more
+                                    
+                                    console.log('[AI Multiverse] Response check:', {
+                                        currentLength,
+                                        previousLength: previousResponseLength,
+                                        isNewResponse,
+                                        hasGrown,
+                                        isDifferent: currentText !== previousResponseText
+                                    });
+                                    
+                                    if (isNewResponse || hasGrown) {
+                                        // Got a valid NEW summary!
+                                        console.log('[AI Multiverse] ✅ NEW summary detected! Length:', currentLength);
+                                        
+                                        // 恢复原有响应（不被总结内容覆盖）
+                                        lastResponses = originalResponsesBackup;
+                                        console.log('[AI Multiverse] 🔄 Restored original responses');
+                                        
+                                        resetSummarizeState();
+                                        removeSummaryLoadingFromHistory(loadingMessageId);
+                                        addSummaryResultToHistory(summarizeModel, currentText);
+                                        showStatus(t('summary_success') || '总结完成', 'success');
+                                        return;
+                                    } else {
+                                        console.log('[AI Multiverse] ⏳ Still waiting for NEW response...');
+                                    }
+                                }
+                            }
+                            
+                            // Continue polling if not done yet
+                            if (pollAttempts < maxPollAttempts) {
+                                setTimeout(pollForSummary, pollInterval);
+                            } else {
+                                // Timeout - show partial result or error
+                                console.warn('[AI Multiverse] Summary polling timeout');
+                                // 恢复原有响应
+                                lastResponses = originalResponsesBackup;
+                                resetSummarizeState();
+                                removeSummaryLoadingFromHistory(loadingMessageId);
+                                addSummarySuccessToHistory(summarizeModel);
+                                showStatus(t('summary_timeout') || '总结超时，请在对应窗口查看', 'info');
+                            }
+                        } catch (err) {
+                            console.error('[AI Multiverse] Poll error:', err);
+                            if (pollAttempts < maxPollAttempts) {
+                                setTimeout(pollForSummary, pollInterval);
+                            } else {
+                                resetSummarizeState();
+                                removeSummaryLoadingFromHistory(loadingMessageId);
+                                addSummaryErrorToHistory(err.message);
+                            }
+                        }
+                    };
+                    
+                    // Start polling after a delay to let the AI start processing
+                    // Longer delay (5 seconds) to ensure the new response has started
+                    setTimeout(pollForSummary, 5000);
+                    
+                } else {
+                    console.error('[AI Multiverse] ❌ Summarize send failed:', result?.error);
+                    resetSummarizeState();
+                    removeSummaryLoadingFromHistory(loadingMessageId);
+                    showStatus(result?.error || t('summary_failed', { error: t('error') }), 'error');
+                    addSummaryErrorToHistory(result?.error || t('error'));
+                }
+            });
+
+        } catch (error) {
+            console.error('[AI Multiverse] Summarization error:', error);
+            // 恢复原有响应
+            lastResponses = originalResponsesBackup;
+            resetSummarizeState();
+            removeSummaryLoadingFromHistory(loadingMessageId);
+            showStatus(t('summary_failed', { error: error.message }), 'error');
+            addSummaryErrorToHistory(error.message);
+        }
+    }
+
+    /**
+     * Add user message to conversation history (left side)
+     */
+    function addUserMessageToHistory(text, providers) {
+        const item = document.createElement('div');
+        item.className = 'history-item user-message';
+        
+        const content = document.createElement('div');
+        content.className = 'message-content';
+        content.textContent = text;
+        
+        const meta = document.createElement('div');
+        meta.className = 'message-meta';
+        meta.textContent = `${formatDateTime(Date.now(), 'time')} · ${providers.length} ${t('models') || '个模型'}`;
+        
+        item.appendChild(content);
+        item.appendChild(meta);
+        historyList.appendChild(item);
+        setTimeout(() => { historyList.scrollTop = historyList.scrollHeight; }, 50);
+    }
+
+    /**
+     * Add waiting status message (right side)
+     */
+    function addWaitingStatusToHistory(providers) {
+        const waitingId = 'waiting-' + Date.now();
+        const item = document.createElement('div');
+        item.className = 'history-item ai-message waiting-status';
+        item.id = waitingId;
+        
+        const header = document.createElement('div');
+        header.className = 'message-header';
+        header.innerHTML = `<span class="status-icon">⏳</span> <strong>${t('waiting_responses') || '等待回复'}</strong>`;
+        
+        const statusList = document.createElement('div');
+        statusList.className = 'status-list';
+        statusList.id = waitingId + '-list';
+        
+        providers.forEach(provider => {
+            const config = AI_CONFIG[provider];
+            const statusItem = document.createElement('div');
+            statusItem.className = 'status-item pending';
+            statusItem.id = `${waitingId}-${provider}`;
+            statusItem.innerHTML = `
+                <span class="status-dot"></span>
+                <span class="status-text">${t('waiting_for') || '等待'} ${config ? config.name : provider}...</span>
+            `;
+            statusList.appendChild(statusItem);
+        });
+        
+        item.appendChild(header);
+        item.appendChild(statusList);
+        historyList.appendChild(item);
+        setTimeout(() => { historyList.scrollTop = historyList.scrollHeight; }, 50);
+        
+        return waitingId;
+    }
+
+    /**
+     * Update waiting status for a specific provider
+     */
+    function updateProviderStatus(waitingId, provider, status) {
+        const statusItem = document.getElementById(`${waitingId}-${provider}`);
+        if (!statusItem) return;
+        
+        const config = AI_CONFIG[provider];
+        const name = config ? config.name : provider;
+        
+        statusItem.className = 'status-item ' + status;
+        
+        if (status === 'completed') {
+            statusItem.innerHTML = `
+                <span class="status-dot"></span>
+                <span class="status-text">✓ ${name} ${t('completed') || '已完成'}</span>
+            `;
+        } else if (status === 'error') {
+            statusItem.innerHTML = `
+                <span class="status-dot"></span>
+                <span class="status-text">✗ ${name} ${t('failed') || '失败'}</span>
+            `;
+        }
+    }
+
+    /**
+     * Start monitoring responses from all providers
+     */
+    function startResponseMonitoring(providers, waitingMessageId) {
+        let checkCount = 0;
+        const maxChecks = 120; // Check for up to 2 minutes
+        const checkInterval = 1000; // Check every second
+        
+        // 设置当前对话的providers，用于实时更新
+        currentConversationProviders = providers;
+        
+        // 初始化每个provider的内容长度历史
+        providerResponseHistory = {};
+        providers.forEach(p => {
+            providerResponseHistory[p] = {
+                lengths: [], // 记录最近几次的内容长度
+                texts: [], // 记录最近几次的完整文本内容
+                stableCount: 0, // 连续长度不变的次数
+                isCompleted: false, // 是否已完成
+                initialText: null, // 初始内容（用于判断是否是上一次的回答）
+                hasNewContent: false // 是否出现了新内容
+            };
+        });
+        
+        // 开始实时更新
+        isRealtimeUpdating = true;
+        
+        // 禁用获取响应按钮（实时更新期间不允许手动获取）
+        if (fetchResponsesBtn) {
+            fetchResponsesBtn.disabled = true;
+        }
+        
+        console.log(`[AI Multiverse] Starting response monitoring for providers:`, providers);
+        console.log(`[AI Multiverse] Is summarizing:`, isSummarizing);
+        
+        const monitorResponses = async () => {
+            checkCount++;
+            console.log(`[AI Multiverse] Monitoring check ${checkCount}/${maxChecks}`);
+            
+            try {
+                const result = await new Promise((resolve) => {
+                    chrome.runtime.sendMessage({
+                        action: 'fetch_all_responses',
+                        providers: providers
+                    }, resolve);
+                });
+                
+                if (result && result.status === 'ok') {
+                    const responses = result.responses;
+                    let completedCount = 0;
+                    let successCount = 0;
+                    let pendingProviders = [];
+                    
+                    // Update status for each provider
+                    providers.forEach(provider => {
+                        const data = responses[provider];
+                        const currentLength = data?.text?.length || 0;
+                        const history = providerResponseHistory[provider];
+                        
+                        if (!history || history.isCompleted) {
+                            // 已经标记为完成的provider，直接计入
+                            if (history?.isCompleted) {
+                                completedCount++;
+                                if (data?.status === 'ok') successCount++;
+                            }
+                            return;
+                        }
+                        
+                        if (data) {
+                            // 记录当前内容长度和完整文本
+                            const currentText = data.text || '';
+                            
+                            // 第一次获取内容时，记录初始内容
+                            if (history.initialText === null && currentText.length > 0) {
+                                history.initialText = currentText;
+                                console.log(`[AI Multiverse] ${provider}: initial text recorded (${currentText.length} chars)`);
+                            }
+                            
+                            // 如果当前内容等于初始内容，说明还没有新回答（可能是上一次的回答）
+                            if (history.initialText && currentText === history.initialText) {
+                                // 继续等待，不记录到稳定判断中
+                                console.log(`[AI Multiverse] ${provider}: still waiting for new content...`);
+                            } else {
+                                // 出现了新内容
+                                if (currentText !== history.initialText) {
+                                    history.hasNewContent = true;
+                                }
+                                
+                                history.lengths.push(currentLength);
+                                history.texts.push(currentText);
+                                if (history.lengths.length > 5) {
+                                    history.lengths.shift(); // 保留最近5次记录
+                                    history.texts.shift();
+                                }
+                            }
+                            
+                            // 只有当出现了新内容后，才检查是否稳定
+                            if (history.hasNewContent && history.texts.length >= 3) {
+                                const recentTexts = history.texts.slice(-3);
+                                const allSame = recentTexts[0] === recentTexts[1] && recentTexts[1] === recentTexts[2];
+                                if (allSame && currentLength > 10) {
+                                    // 内容连续3次完全相同，认为已完成
+                                    history.isCompleted = true;
+                                    updateProviderStatus(waitingMessageId, provider, 'completed');
+                                    completedCount++;
+                                    successCount++;
+                                    console.log(`[AI Multiverse] ${provider}: TRULY completed (stable at ${currentLength} chars)`);
+                                    return;
+                                }
+                            }
+                            
+                            // 状态是ok但内容不稳定，继续等待，不计入完成数
+                            if (data.status === 'ok' && !history.isCompleted) {
+                                // 不再标记为completed，保持pending状态
+                                console.log(`[AI Multiverse] ${provider}: generating... (${currentLength} chars)`);
+                            } else if (data.status === 'error' && data.error && !data.error.includes('not_open')) {
+                                // Only count real errors, not "not_open" status
+                                updateProviderStatus(waitingMessageId, provider, 'error');
+                                completedCount++;
+                                console.log(`[AI Multiverse] ${provider}: error - ${data.error}`);
+                            } else {
+                                pendingProviders.push(provider);
+                                console.log(`[AI Multiverse] ${provider}: still waiting (status: ${data.status}, length: ${currentLength})`);
+                            }
+                        } else {
+                            pendingProviders.push(provider);
+                            console.log(`[AI Multiverse] ${provider}: no data yet`);
+                        }
+                    });
+                    
+                    console.log(`[AI Multiverse] Progress: ${completedCount}/${providers.length} completed, ${successCount} successful`);
+                    if (pendingProviders.length > 0) {
+                        console.log(`[AI Multiverse] Still waiting for:`, pendingProviders.join(', '));
+                    }
+                    
+                    // 实时更新响应UI（如果有响应数据）
+                    if (isRealtimeUpdating && Object.keys(responses).length > 0) {
+                        renderResponses(responses, providers);
+                    }
+                    
+                    // Check if all completed
+                    if (completedCount === providers.length) {
+                        console.log('[AI Multiverse] ✅ All responses received!');
+                        console.log('[AI Multiverse] Successful responses:', successCount);
+                        console.log('[AI Multiverse] Is summarizing:', isSummarizing);
+                        
+                        // 冻结内容：停止实时更新
+                        isRealtimeUpdating = false;
+                        
+                        // Remove waiting status
+                        const waitingElement = document.getElementById(waitingMessageId);
+                        if (waitingElement) {
+                            waitingElement.remove();
+                        }
+                        
+                        // Store responses for summarization
+                        lastResponses = responses;
+                        console.log('[AI Multiverse] Stored responses in lastResponses:', Object.keys(lastResponses));
+                        
+                        // Enable summarize button if we have successful responses
+                        const summarizeBtn = document.getElementById('summarizeBtn');
+                        if (summarizeBtn && successCount > 0) {
+                            summarizeBtn.disabled = false;
+                            summarizeBtn.classList.add('ready'); // 添加就绪状态，光晕闪烁
+                            console.log('[AI Multiverse] ✅ Enabled summarize button');
+                        }
+                        
+                        // 禁用获取响应按钮（响应已冻结，等待用户发送新消息或总结）
+                        if (fetchResponsesBtn) {
+                            fetchResponsesBtn.disabled = true;
+                        }
+                        
+                        if (successCount === 0) {
+                            console.warn('[AI Multiverse] ❌ No successful responses');
+                        }
+                        
+                        // 保存响应到历史记录
+                        saveResponsesToHistory(providers, responses);
+                        
+                        return; // Stop monitoring
+                    }
+                }
+                
+                // Continue monitoring if not all complete and not timed out
+                if (checkCount < maxChecks) {
+                    setTimeout(monitorResponses, checkInterval);
+                } else {
+                    console.warn('[AI Multiverse] Response monitoring timeout');
+                    
+                    // 冻结内容：停止实时更新
+                    isRealtimeUpdating = false;
+                    
+                    // 禁用获取响应按钮
+                    if (fetchResponsesBtn) {
+                        fetchResponsesBtn.disabled = true;
+                    }
+                    
+                    const waitingElement = document.getElementById(waitingMessageId);
+                    if (waitingElement) {
+                        const header = waitingElement.querySelector('.message-header');
+                        if (header) {
+                            header.innerHTML = `<span class="status-icon">⚠️</span> <strong>${t('timeout') || '超时'}</strong>`;
+                        }
+                    }
+                    
+                    // 保存响应到历史记录（即使超时也保存已获取的响应）
+                    if (responses && Object.keys(responses).length > 0) {
+                        saveResponsesToHistory(providers, responses);
+                    }
+                }
+                
+            } catch (err) {
+                console.error('[AI Multiverse] Monitoring error:', err);
+                if (checkCount < maxChecks) {
+                    setTimeout(monitorResponses, checkInterval);
+                }
+            }
+        };
+        
+        // Start monitoring after a short delay
+        setTimeout(monitorResponses, 2000);
+    }
+
+    /**
+     * Add loading animation to conversation history
+     */
+    function addSummaryLoadingToHistory() {
+        const loadingId = 'summary-loading-' + Date.now();
+        const item = document.createElement('div');
+        item.className = 'history-item summary-loading';
+        item.id = loadingId;
+        item.innerHTML = `
+            <div class="history-text">
+                <div class="summary-loading-animation">
+                    <div class="loading-dots">
+                        <span></span><span></span><span></span>
+                    </div>
+                    <span class="loading-text">${t('summarizing') || '正在生成智能总结...'}</span>
+                </div>
+            </div>
+        `;
+        historyList.appendChild(item);
+        setTimeout(() => { historyList.scrollTop = historyList.scrollHeight; }, 50);
+        return loadingId;
+    }
+
+    /**
+     * Remove loading animation from conversation history
+     */
+    function removeSummaryLoadingFromHistory(loadingId) {
+        const loadingElement = document.getElementById(loadingId);
+        if (loadingElement) {
+            loadingElement.remove();
+        }
+    }
+
+    /**
+     * Add success message to conversation history
+     */
+    function addSummarySuccessToHistory(modelName) {
+        const config = AI_CONFIG[modelName];
+        const displayName = config ? config.name : modelName;
+        
+        const item = document.createElement('div');
+        item.className = 'history-item summary-success';
+        item.innerHTML = `
+            <div class="history-text">
+                <div class="summary-badge">✨ ${t('summary_title') || '智能总结'}</div>
+                <div class="summary-message">
+                    ${t('summary_sent_to') || '总结请求已发送至'} <strong>${displayName}</strong>
+                    <br>
+                    <small>${t('summary_check_window') || '请在对应窗口查看总结结果'}</small>
+                </div>
+            </div>
+            <div class="history-footer">
+                <span class="history-meta">${formatDateTime(Date.now(), 'time')}</span>
+            </div>
+        `;
+        historyList.appendChild(item);
+        setTimeout(() => { historyList.scrollTop = historyList.scrollHeight; }, 50);
+    }
+
+    /**
+     * Add summary result to conversation history (with actual content)
+     */
+    function addSummaryResultToHistory(modelName, summaryText) {
+        const config = AI_CONFIG[modelName];
+        const displayName = config ? config.name : modelName;
+        
+        const item = document.createElement('div');
+        item.className = 'history-item ai-message summary-result';
+        
+        // Create header - "由Gemini总结生成"
+        const header = document.createElement('div');
+        header.className = 'summary-header';
+        header.innerHTML = `<span class="summary-title">✨ 由 ${displayName} 总结生成</span>`;
+        
+        // Create content area with Markdown rendering
+        const content = document.createElement('div');
+        content.className = 'summary-content markdown-content';
+        content.innerHTML = renderMarkdown(summaryText);
+        
+        // Add copy buttons to code blocks
+        addCopyButtonsToCodeBlocks(content);
+        
+        // Create footer with actions
+        const footer = document.createElement('div');
+        footer.className = 'history-footer';
+        
+        const meta = document.createElement('span');
+        meta.className = 'history-meta';
+        meta.textContent = formatDateTime(Date.now(), 'time');
+        
+        const actions = document.createElement('div');
+        actions.className = 'history-actions';
+        
+        // Copy button
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'history-action-btn';
+        copyBtn.title = t('copy_response') || '复制';
+        copyBtn.innerHTML = '📋';
+        copyBtn.onclick = async () => {
+            try {
+                await navigator.clipboard.writeText(summaryText);
+                copyBtn.innerHTML = '✓';
+                setTimeout(() => copyBtn.innerHTML = '📋', 2000);
+            } catch (err) {
+                console.error('Copy failed:', err);
+            }
+        };
+        
+        actions.appendChild(copyBtn);
+        footer.appendChild(meta);
+        footer.appendChild(actions);
+        
+        item.appendChild(header);
+        item.appendChild(content);
+        item.appendChild(footer);
+        
+        historyList.appendChild(item);
+        setTimeout(() => { historyList.scrollTop = historyList.scrollHeight; }, 50);
+        
+        // Save summary to storage for persistence
+        chrome.storage.local.get(['chat_history'], (result) => {
+            const history = result.chat_history || [];
+            history.push({
+                type: 'summary',
+                modelName: modelName,
+                text: summaryText,
+                timestamp: Date.now()
+            });
+            if (history.length > 50) history.shift();
+            chrome.storage.local.set({ chat_history: history });
+        });
+    }
+
+    /**
+     * Add error message to conversation history
+     */
+    function addSummaryErrorToHistory(errorMessage) {
+        const item = document.createElement('div');
+        item.className = 'history-item summary-error';
+        item.innerHTML = `
+            <div class="history-text">
+                <div class="summary-badge error">❌ ${t('summary_failed_title') || '总结失败'}</div>
+                <div class="summary-message error">
+                    ${errorMessage}
+                </div>
+            </div>
+            <div class="history-footer">
+                <span class="history-meta">${formatDateTime(Date.now(), 'time')}</span>
+            </div>
+        `;
+        historyList.appendChild(item);
+        setTimeout(() => { historyList.scrollTop = historyList.scrollHeight; }, 50);
+    }
+
+    // Load summarize settings on initialization
+    loadSummarizeSettings();
+});

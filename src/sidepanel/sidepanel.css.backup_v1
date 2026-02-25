@@ -948,15 +948,25 @@ body {
 }
 
 .response-card-body {
-    padding: 12px;
+    padding: 16px;
     font-size: 13px;
     line-height: 1.6;
+    max-height: 140px;
+    overflow: hidden;
+    mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
     color: var(--text-secondary);
-    /* v2.0: 移除高度限制，让内容完整展示 */
-    /* v2.0: 移除cursor，卡片不再可点击 */
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
 }
 
-/* v2.0: 已移除 wide-layout 相关样式，不再需要 */
+/* Wide layout: 展示完整内容，由外层统一滚动 */
+.responses-grid.wide-layout .response-card-body {
+    max-height: none;
+    overflow: visible;
+    mask-image: none;
+}
 
 .main-logo-img {
     width: 24px;
@@ -3304,10 +3314,6 @@ body.modal-resizing * {
 
 /* Conversation Question (expanded state) */
 .conversation-question {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 16px;
     font-size: 16px;
     font-weight: 500;
     color: var(--text-primary);
@@ -3316,60 +3322,12 @@ body.modal-resizing * {
     border-bottom: 1px solid var(--border-light);
 }
 
-.conversation-question-content {
-    flex: 1;
-    word-break: break-word;
-}
-
-/* Conversation Controls */
-.conversation-controls {
-    display: flex;
-    gap: 6px;
-    flex-shrink: 0;
-}
-
-.control-btn {
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    border: 1px solid var(--border-light);
-    background: var(--bg-card);
-    color: var(--text-secondary);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s ease;
-}
-
-.control-btn:hover {
-    background: var(--accent-bg);
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
-.control-btn:active {
-    transform: scale(0.95);
-}
-
 /* Conversation Responses */
 .conversation-responses {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 16px;
     margin-bottom: 16px;
-}
-
-/* Tiled Layout - 平铺布局 */
-.conversation-responses.tiled-layout {
-    display: flex;
-    flex-wrap: wrap;
-}
-
-.conversation-responses.tiled-layout .response-card {
-    flex: 1 1 calc(50% - 8px);
-    min-width: 280px;
-    max-width: none;
 }
 
 /* Response Card */
@@ -3407,11 +3365,12 @@ body.modal-resizing * {
 
 .response-card-body {
     padding: 12px;
+    max-height: 200px;
+    overflow: hidden;
+    cursor: pointer;
     font-size: 13px;
     line-height: 1.6;
     color: var(--text-secondary);
-    /* 移除 max-height 和 overflow，让内容完整展示 */
-    /* 移除 cursor，卡片不再可点击 */
 }
 
 .response-char-count {
@@ -3559,17 +3518,11 @@ body.modal-resizing * {
     align-items: center;
     justify-content: center;
     transition: all 0.2s ease;
-    flex-shrink: 0;
 }
 
-.action-btn:hover:not(:disabled) {
+.action-btn:hover {
     background: var(--hover-bg);
     border-color: var(--accent);
-}
-
-.action-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
 }
 
 .action-btn.primary {
@@ -3692,40 +3645,4 @@ body.modal-resizing * {
     .conversation-responses {
         grid-template-columns: 1fr;
     }
-}
-
-/* Additional v2.0 Variables */
-:root {
-    --bg-card-secondary: #0f1419;
-    --input-bg: #0d1117;
-    --hover-bg: #1a2029;
-    --accent-hover: #2a7bd9;
-    --accent-bg: rgba(61, 138, 255, 0.1);
-}
-
-[data-theme="dark"] {
-    --bg-card-secondary: #0f1419;
-    --input-bg: #0d1117;
-    --hover-bg: #1a2029;
-    --accent-hover: #2a7bd9;
-    --accent-bg: rgba(61, 138, 255, 0.1);
-}
-
-[data-theme="light"] {
-    --bg-card-secondary: #f0f3f6;
-    --input-bg: #ffffff;
-    --hover-bg: #ebf0f4;
-    --accent-hover: #0050ba;
-    --accent-bg: rgba(9, 105, 218, 0.1);
-}
-
-.main-logo-img {
-    width: 28px;
-    height: 28px;
-}
-
-.provider-icon-img {
-    width: 20px;
-    height: 20px;
-    object-fit: contain;
 }

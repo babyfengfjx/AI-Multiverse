@@ -4,6 +4,7 @@ let popupWindowId = null;
 
 // Track which windowId belongs to which provider
 let providerWindows = {};
+let savedLayout = {}; // Store saved window layouts
 
 // === Extension Click/Command Behavior ===
 async function togglePopup() {
@@ -49,7 +50,7 @@ async function togglePopup() {
         const newWin = await chrome.windows.create({
             url: 'src/sidepanel/sidepanel.html',
             type: 'popup',
-            width: 580,
+            width: 870,  // Increased from 580 (50% wider)
             height: 800,
             focused: true,
         });
@@ -70,6 +71,44 @@ try {
     importScripts('config.js');
 } catch (e) {
     console.warn('Could not import config.js directly, assuming it is bundled or global context.', e);
+}
+
+// === Translations for Background Worker ===
+const TRANSLATIONS = {
+    en: {
+        err_script_injection_failed: 'Script injection failed',
+        sent: 'Sent!',
+        err_prefix: 'Error: ',
+        closed_windows: 'Closed {count} windows, {tabs} tabs'
+    },
+    'zh-CN': {
+        err_script_injection_failed: '脚本注入失败',
+        sent: '发送成功！',
+        err_prefix: '错误：',
+        closed_windows: '已关闭 {count} 个窗口，{tabs} 个标签页'
+    }
+};
+
+let backgroundLang = 'en';
+
+// Load language preference
+chrome.storage.local.get(['lang'], (result) => {
+    backgroundLang = result.lang || 'en';
+});
+
+// Listen for language changes
+/**
+ * Simple translation helper for background worker
+ */
+function bt(key, vars = {}) {
+    const lang = backgroundLang;
+    const dict = TRANSLATIONS[lang] || TRANSLATIONS.en;
+    let text = dict[key] || key;
+
+    // Replace variables {var_name}
+    return text.replace(/\{(\w+)\}/g, (match, varName) => {
+        return vars[varName] !== undefined ? vars[varName] : match;
+    });
 }
 
 // === Helper: Identify our own popup/sidepanel window ===
@@ -116,14 +155,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             chrome.windows.create({
                 url: chrome.runtime.getURL('src/sidepanel/sidepanel.html'),
                 type: 'popup',
-                width: 580,
+                width: 870,  // Increased from 580 (50% wider)
                 height: 800,
                 focused: true,
             }).then(win => { popupWindowId = win.id; });
             sendResponse({ status: 'OK' });
+        } else if (request.action === 'diagnose_selectors') {
+            handleDiagnoseSelectors(request.provider).then(result => {
+                sendResponse(result);
+            }).catch(err => {
+                sendResponse({ status: 'error', error: err.message });
+            });
+            return true;
         } else if (request.action === 'fetch_all_responses') {
             fetchAllResponses(request.providers).then(responses => {
                 sendResponse({ status: 'ok', responses });
+            }).catch(err => {
+                sendResponse({ status: 'error', error: err.message });
+            });
+            return true;
+        } else if (request.action === 'summarize_responses') {
+            handleSummarizeResponses(request.provider, request.prompt).then(() => {
+                sendResponse({ status: 'ok' });
             }).catch(err => {
                 sendResponse({ status: 'error', error: err.message });
             });
@@ -214,6 +267,114 @@ async function fetchAllResponses(providers) {
     return results;
 }
 
+// === Diagnose Selectors ===
+async function handleDiagnoseSelectors(provider) {
+    // Find tab for this provider
+    let tabId = null;
+    if (providerWindows[provider]) {
+        try {
+            await chrome.windows.get(providerWindows[provider].windowId);
+            tabId = providerWindows[provider].tabId;
+        } catch (e) { delete providerWindows[provider]; }
+    }
+
+    if (!tabId) {
+        return { status: 'error', error: 'No tab open for this provider' };
+    }
+
+    try {
+        // Ensure content script is injected
+        await ensureContentScript(tabId);
+        const response = await chrome.tabs.sendMessage(tabId, {
+            action: 'diagnose_selectors',
+            provider: provider
+        });
+        return response;
+    } catch (err) {
+        return { status: 'error', error: err.message };
+    }
+}
+
+// === Handle Summarize Responses ===
+async function handleSummarizeResponses(provider, prompt) {
+    console.log('[AI Multiverse Background] handleSummarizeResponses called');
+    console.log('[AI Multiverse Background] Provider:', provider);
+    console.log('[AI Multiverse Background] Prompt length:', prompt?.length);
+    console.log('[AI Multiverse Background] Prompt first 300 chars:', prompt?.substring(0, 300));
+    console.log('[AI Multiverse Background] Prompt last 300 chars:', prompt?.substring(prompt.length - 300));
+    
+    if (!PROVIDER_CONFIG[provider]) {
+        throw new Error(`Unknown provider: ${provider}`);
+    }
+
+    const config = PROVIDER_CONFIG[provider];
+
+    // Try to find existing tab for this provider
+    let tabId = null;
+    
+    // First, try to find any existing tab matching the URL pattern
+    const patternsToCheck = [config.urlPattern];
+    if (config.urlPatternAlt) patternsToCheck.push(config.urlPatternAlt);
+    if (config.urlPatterns) patternsToCheck.push(...config.urlPatterns);
+    
+    const uniquePatterns = [...new Set(patternsToCheck.filter(p => typeof p === 'string' && p.length > 0))];
+    
+    for (const pattern of uniquePatterns) {
+        try {
+            const tabs = await chrome.tabs.query({ url: pattern });
+            // Skip internal extension tabs
+            const validTab = tabs.find(t => t.url && !t.url.startsWith('chrome-extension://'));
+            if (validTab) {
+                tabId = validTab.id;
+                providerWindows[provider] = { windowId: validTab.windowId, tabId: tabId };
+                console.log('[AI Multiverse Background] Found existing tab by URL:', tabId);
+                break;
+            }
+        } catch (e) {
+            console.warn('[AI Multiverse Background] Error querying tabs:', e);
+        }
+    }
+    
+    // If still no tab found, check saved providerWindows
+    if (!tabId && providerWindows[provider]) {
+        try {
+            await chrome.windows.get(providerWindows[provider].windowId);
+            tabId = providerWindows[provider].tabId;
+            console.log('[AI Multiverse Background] Found existing tab from saved windows:', tabId);
+        } catch (e) { 
+            console.log('[AI Multiverse Background] Saved window not found');
+            delete providerWindows[provider]; 
+        }
+    }
+
+    // If no existing tab, create one
+    if (!tabId) {
+        console.log('[AI Multiverse Background] Creating new tab for', provider);
+        const tab = await chrome.tabs.create({ url: config.baseUrl, active: false });
+        tabId = tab.id;
+        providerWindows[provider] = { windowId: tab.windowId, tabId: tabId };
+        console.log('[AI Multiverse Background] Created tab:', tabId);
+
+        // Wait for tab to load with timeout
+        await waitForTabLoad(tabId, 30000);
+        console.log('[AI Multiverse Background] Tab loaded');
+    }
+
+    // Ensure content script is injected
+    await ensureContentScript(tabId);
+    console.log('[AI Multiverse Background] Content script ensured');
+
+    // Send the summarization prompt
+    console.log('[AI Multiverse Background] Sending fill_and_send message to tab', tabId);
+    await chrome.tabs.sendMessage(tabId, {
+        action: 'fill_and_send',
+        text: prompt,
+        provider: provider,
+        files: []
+    });
+    console.log('[AI Multiverse Background] Message sent successfully');
+}
+
 // === Main World Injection (Provider-Aware Fill) ===
 async function executeMainWorldFill(tabId, selector, text, provider) {
     return chrome.scripting.executeScript({
@@ -246,7 +407,8 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
                 // Dispatch basic events to clear
                 el.dispatchEvent(new Event('input', { bubbles: true }));
 
-                // Set new value
+                // Set new value - direct property setter works for any length
+                console.log('[AI Multiverse] Setting textarea/input value, length:', v.length);
                 if (setter) setter.call(el, v);
                 else el.value = v;
 
@@ -284,12 +446,14 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
                     el.focus();
                 } catch (e) { }
 
-                // Small delay to let the editor's internal state catch up to the deletion
-                document.execCommand('insertText', false, v);
-
+                // For very long text, use direct textContent to avoid execCommand limits
+                // Gemini can handle very long context, so no need to worry about length
+                console.log('[AI Multiverse] Inserting text, length:', v.length, 'chars');
+                el.textContent = v;
+                
+                // Trigger events to notify the editor
                 const events = ['input', 'change', 'blur'];
                 events.forEach(type => el.dispatchEvent(new Event(type, { bubbles: true })));
-                // Tiptap/ProseMirror specific sync
                 el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, inputType: 'insertText', data: v }));
                 el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: v }));
             };
@@ -313,8 +477,23 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
                 return true;
             }
 
-            // 注意：Kimi 现在完全在内容脚本中通过 fillContentEditable 处理，
-            // 这里不再做任何主世界级别的特殊填充逻辑，以避免多重事件链。
+            // Kimi 使用 contenteditable div，需要特殊处理以确保内部状态正确更新
+            if (hostname.includes('kimi.moonshot.cn') || hostname.includes('kimi.com')) {
+                const el = findEl(['div[contenteditable="true"]', 'div.chat-input', 'div[class*="input"]', 'div[class*="editor"]']);
+                if (!el) return false;
+                
+                // 使用 contenteditable 填充逻辑
+                ceditFill(el, val);
+                
+                // Kimi 需要额外的事件触发来更新发送按钮状态
+                setTimeout(() => {
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', bubbles: true }));
+                }, 100);
+                
+                return true;
+            }
 
             if (hostname.includes('chat.deepseek.com')) {
                 const el = findEl(['textarea#chat-input', 'textarea[placeholder*="DeepSeek"]', 'textarea']);
@@ -474,12 +653,8 @@ async function handleTileWindows(providers) {
 
     await Promise.all(tilePromises);
 
-    // Focus the first window last so user sees all windows arranged
-    if (windowsToTile.length > 0) {
-        try {
-            await chrome.windows.update(windowsToTile[0].windowId, { focused: true });
-        } catch (e) { /* ignore */ }
-    }
+    // No longer focusing first window - let user manually select which window to view
+    // If Browse Mode is enabled, mouse hover will auto-focus
 }
 
 // Helper: find which display a window is on
@@ -517,26 +692,50 @@ async function ensureContentScript(tabId) {
     }
 }
 
-function waitForTabLoad(tabId) {
-    return new Promise((resolve) => {
-        chrome.tabs.onUpdated.addListener(function listener(updatedTabId, info) {
+function waitForTabLoad(tabId, timeout = 30000) {
+    return new Promise((resolve, reject) => {
+        let resolved = false;
+        let cleanupTimer = null;
+
+        const listener = (updatedTabId, info) => {
             if (updatedTabId === tabId && info.status === 'complete') {
-                chrome.tabs.onUpdated.removeListener(listener);
+                cleanup();
                 resolve();
             }
-        });
+        };
+
+        const cleanup = () => {
+            if (resolved) return;
+            resolved = true;
+            chrome.tabs.onUpdated.removeListener(listener);
+            if (cleanupTimer) clearTimeout(cleanupTimer);
+        };
+
+        chrome.tabs.onUpdated.addListener(listener);
+
+        // Check if already loaded
         chrome.tabs.get(tabId, (tab) => {
-            if (tab && tab.status === 'complete') { resolve(); }
+            if (tab && tab.status === 'complete') {
+                cleanup();
+                resolve();
+                return;
+            }
+
+            // Set timeout to prevent infinite waiting
+            cleanupTimer = setTimeout(() => {
+                cleanup();
+                resolve();  // Resolve anyway to avoid blocking
+            }, timeout);
         });
     });
 }
 
-async function handleBroadcast(message, providers) {
-    const tasks = providers.map(p => sendToProvider(p, message));
+async function handleBroadcast(message, providers, files = []) {
+    const tasks = providers.map(p => sendToProvider(p, message, files));
     await Promise.allSettled(tasks);
 }
 
-async function sendToProvider(providerKey, message) {
+async function sendToProvider(providerKey, message, files = []) {
     if (!PROVIDER_CONFIG[providerKey]) return;
     const config = PROVIDER_CONFIG[providerKey];
     let tabId = null;
@@ -586,13 +785,18 @@ async function sendToProvider(providerKey, message) {
     }
 
     const injected = await ensureContentScript(tabId);
-    if (!injected) { notifyStatus(providerKey, 'Script injection failed', 'error'); return; }
+    if (!injected) { notifyStatus(providerKey, bt('err_script_injection_failed'), 'error'); return; }
 
     try {
-        await chrome.tabs.sendMessage(tabId, { action: 'fill_and_send', text: message, provider: providerKey });
-        notifyStatus(providerKey, 'Sent!', 'success');
+        await chrome.tabs.sendMessage(tabId, { 
+            action: 'fill_and_send', 
+            text: message, 
+            provider: providerKey,
+            files: files 
+        });
+        notifyStatus(providerKey, bt('sent'), 'success');
     } catch (err) {
-        notifyStatus(providerKey, 'Error: ' + err.message, 'error');
+        notifyStatus(providerKey, bt('err_prefix') + err.message, 'error');
     }
 }
 
@@ -714,6 +918,125 @@ async function handleCloseAll() {
         action: 'status_update',
         status: 'success',
         provider: 'system',
-        message: `Closed ${closeWindowIds.size} windows, ${closeTabIds.size} tabs`
+        message: bt('closed_windows', { count: closeWindowIds.size, tabs: closeTabIds.size })
     }).catch(() => { });
 }
+
+// === Layout Memory Functions ===
+
+/**
+ * Save current window layout to storage
+ */
+async function saveLayout(providers) {
+    const layout = {};
+
+    for (const providerKey of providers) {
+        if (providerWindows[providerKey]) {
+            try {
+                const win = await chrome.windows.get(providerWindows[providerKey].windowId);
+                if (win && win.id !== popupWindowId) {
+                    layout[providerKey] = {
+                        left: win.left,
+                        top: win.top,
+                        width: win.width,
+                        height: win.height,
+                        state: win.state
+                    };
+                }
+            } catch (e) { }
+        }
+    }
+
+    chrome.storage.local.set({ saved_layout: layout });
+}
+
+/**
+ * Load saved layout from storage
+ */
+async function loadLayout() {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(['saved_layout'], (result) => {
+            savedLayout = result.saved_layout || {};
+            resolve(savedLayout);
+        });
+    });
+}
+
+/**
+ * Apply saved layout to windows
+ */
+async function applySavedLayout(providers) {
+    await loadLayout();
+
+    if (Object.keys(savedLayout).length === 0) return;
+
+    for (const providerKey of providers) {
+        if (savedLayout[providerKey] && providerWindows[providerKey]) {
+            try {
+                const layout = savedLayout[providerKey];
+                await chrome.windows.update(providerWindows[providerKey].windowId, {
+                    left: layout.left,
+                    top: layout.top,
+                    width: layout.width,
+                    height: layout.height,
+                    state: layout.state
+                });
+            } catch (e) {
+                console.error(`Failed to apply layout for ${providerKey}:`, e);
+            }
+        }
+    }
+}
+
+/**
+ * Clear saved layout
+ */
+async function clearSavedLayout() {
+    savedLayout = {};
+    chrome.storage.local.remove(['saved_layout']);
+}
+
+// Patch handleBroadcast to save layout after sending
+const originalHandleBroadcast = handleBroadcast;
+handleBroadcast = async function(message, providers) {
+    await originalHandleBroadcast.call(this, message, providers);
+    // Save layout after all windows are opened and positioned
+    setTimeout(() => saveLayout(providers), 1000);
+};
+
+// Patch handleTileWindows to save layout after tiling
+const originalHandleTileWindows = handleTileWindows;
+handleTileWindows = async function(providers) {
+    await originalHandleTileWindows.call(this, providers);
+    // Save layout after tiling
+    saveLayout(providers);
+};
+
+// Patch handleLaunchOnly to save layout after launching
+const originalHandleLaunchOnly = handleLaunchOnly;
+handleLaunchOnly = async function(providers) {
+    await originalHandleLaunchOnly.call(this, providers);
+    // Save layout after launching and tiling
+    setTimeout(() => saveLayout(providers), 1500);
+};
+
+// Add message handler for clear layout
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === 'clear_layout') {
+        clearSavedLayout().then(() => {
+            sendResponse({ status: 'ok' });
+        });
+        return true;
+    } else if (request.action === 'reset_layout') {
+        const providers = request.providers || [];
+        applySavedLayout(providers).then(() => {
+            sendResponse({ status: 'ok' });
+        });
+        return true;
+    } else if (request.action === 'language_changed') {
+        backgroundLang = request.lang || 'en';
+        sendResponse({ status: 'ok' });
+        return true;
+    }
+});
+

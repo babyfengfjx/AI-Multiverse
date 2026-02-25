@@ -441,7 +441,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // 添加总结卡片
             if (conv.summary) {
-                const summaryDiv = createSummaryCard(conv.summary);
+                const summaryDiv = createSummaryCard(conv.summary, conv.id);
                 div.appendChild(summaryDiv);
             }
         }
@@ -530,22 +530,80 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     /**
-     * 创建总结卡片
+     * 创建总结卡片 - 支持实时流式、HTML格式、查看详情、文字选择
      */
-    function createSummaryCard(summary) {
+    function createSummaryCard(summary, convId) {
         const div = document.createElement('div');
         div.className = 'summary-card';
+
+        const isGenerating = summary.status === 'generating' || summary.status === 'loading';
+        const modelName = AI_CONFIG[summary.model]?.name || summary.model;
+
+        // Prefer HTML from the AI page (rich format), fallback to markdown render
+        let bodyContent = '';
+        if (summary.html && summary.html.trim()) {
+            bodyContent = summary.html;
+        } else if (summary.text) {
+            bodyContent = renderMarkdown(summary.text);
+        }
+
         div.innerHTML = `
             <div class="summary-header">
-                <span class="summary-title">✨ 智能总结</span>
-                <span class="summary-model">由 ${AI_CONFIG[summary.model]?.name || summary.model} 生成</span>
+                <div class="summary-header-left">
+                    <span class="summary-title">✨ 智能总结</span>
+                    <span class="summary-model">由 ${modelName} 生成</span>
+                    ${isGenerating ? '<span class="status-badge generating" style="font-size:11px;">&#x1F504; 生成中...</span>' : ''}
+                </div>
+                ${(!isGenerating && summary.text) ? `
+                <button class="control-btn" onclick="window.showSummaryDetail('${convId}')" title="查看详情" style="font-size:12px; padding: 4px 8px; display:flex; align-items:center; gap:4px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+                    详情
+                </button>` : ''}
             </div>
-            <div class="summary-body markdown-content">
-                ${renderMarkdown(summary.text)}
+            <div class="summary-body markdown-content" style="user-select: text; -webkit-user-select: text;">
+                ${bodyContent || '<span style="color: var(--text-secondary); font-style: italic;">正在生成总结...</span>'}
             </div>
         `;
         return div;
     }
+
+    /**
+     * 在模态框中查看总结详情
+     */
+    window.showSummaryDetail = function (convId) {
+        const conv = conversations.find(c => c.id === (typeof convId === 'string' ? parseInt(convId) : convId));
+        if (!conv || !conv.summary) return;
+
+        const summary = conv.summary;
+        const detailModal = document.getElementById('detailModal');
+        const detailIcon = document.getElementById('detailIcon');
+        const detailName = document.getElementById('detailName');
+        const detailText = document.getElementById('detailText');
+        const positionText = document.getElementById('positionText');
+        const positionDots = document.getElementById('positionDots');
+
+        const modelConfig = AI_CONFIG[summary.model];
+        if (modelConfig) {
+            detailIcon.src = modelConfig.icon;
+            detailName.textContent = `✨ 智能总结 - ${modelConfig.name}`;
+        } else {
+            detailIcon.src = '';
+            detailName.textContent = `✨ 智能总结`;
+        }
+
+        if (summary.html && summary.html.trim()) {
+            detailText.innerHTML = summary.html;
+        } else {
+            detailText.innerHTML = renderMarkdown(summary.text);
+        }
+
+        // Hide position indicator for summary (single item)
+        if (positionText) positionText.textContent = '';
+        if (positionDots) positionDots.innerHTML = '';
+        document.getElementById('modalPositionIndicator')?.classList.add('hidden');
+
+        detailModal.classList.add('active');
+    };
 
     /**
      * HTML转义
@@ -872,7 +930,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     /**
-     * 轮询总结结果
+     * 轮询总结结果 - 支持实时流式显示
      */
     function startPollingSummary(convId, provider) {
         const interval = setInterval(async () => {
@@ -890,20 +948,34 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 if (result && result.status === 'ok' && result.responses) {
                     const response = result.responses[provider];
-                    if (response && response.status === 'ok' && response.text) {
+
+                    if (response && (response.status === 'generating' || response.status === 'ok') && response.text) {
+                        // 实时更新，无论 generating 还是 ok 状态
                         conv.summary = {
                             model: provider,
                             text: response.text,
                             html: response.html || '',
-                            status: 'ok',
+                            status: response.status,
                             timestamp: Date.now()
                         };
 
-                        // 总结完成，存档
-                        await archiveConversation(convId);
-                        clearInterval(interval);
+                        // 实时渲染和滚动，让用户看到内容正在生成
                         renderConversations();
-                        showNotification(t('summarize_complete'), 'success');
+                        if (isNearBottom()) {
+                            conversationStream.scrollTop = conversationStream.scrollHeight;
+                        }
+
+                        if (response.status === 'ok') {
+                            // 总结完成，存档
+                            conv.summary.status = 'ok';
+                            await archiveConversation(convId);
+                            clearInterval(interval);
+                            renderConversations();
+                            setTimeout(() => {
+                                conversationStream.scrollTop = conversationStream.scrollHeight;
+                            }, 50);
+                            showNotification(t('summarize_complete'), 'success');
+                        }
                     }
                 }
             } catch (e) {

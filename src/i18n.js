@@ -105,6 +105,7 @@ const I18N = {
         tiled: "Tiling...",
         launching: "Launching...",
         closing: "Closing...",
+        open_selected: "Open Selected Only",
 
         // Model Selection
         models_title: "AI Models",
@@ -295,6 +296,7 @@ const I18N = {
         tiled: "平铺中...",
         launching: "打开中...",
         closing: "关闭中...",
+        open_selected: "仅打开网页",
 
         // Model Selection
         models_title: "AI 模型",

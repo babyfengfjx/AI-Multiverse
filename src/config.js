@@ -60,7 +60,7 @@ const AI_CONFIG = {
         baseUrl: 'https://kimi.moonshot.cn/',
         selectors: {
             input: [
-                'div[contenteditable="true"]', 
+                'div[contenteditable="true"]',
                 'div.chat-input',
                 'div[class*="input"]',
                 'div[class*="editor"]',
@@ -68,14 +68,20 @@ const AI_CONFIG = {
                 '#chat-input'
             ],
             button: [
-                'div[class*="sendButton"]', 
-                'button[class*="sendButton"]', 
+                'div[class*="sendButton"]',
+                'button[class*="sendButton"]',
                 '#send-button',
                 'div[class*="send"]',
                 'button[type="submit"]'
             ],
             response: [
-                'div[class*="message--assistant"] div[class*="content"]', 
+                // Most specific: the direct message content container for assistant messages
+                // Using > to only target direct children to avoid partial matches
+                '.segment-assistant .message-content',
+                'div[class*="message--assistant"] > div[class*="content"]',
+                // Kimi specific class pattern for the full response block
+                'div[class*="message-item--assistant"] [class*="markdown"]',
+                // Fallback broader selectors
                 '.markdown-body',
                 'div[class*="response"]',
                 'div[class*="answer"]'

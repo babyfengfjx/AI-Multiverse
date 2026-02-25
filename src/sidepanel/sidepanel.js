@@ -226,6 +226,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
 
                 renderConversations();
+                setTimeout(() => {
+                    conversationStream.scrollTop = conversationStream.scrollHeight;
+                }, 50);
             }
         } catch (e) {
             console.error('[Storage] Load error:', e);
@@ -285,20 +288,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // 更新操作按钮状态
         updateActionButtons();
-
-        // 滚动到最新对话的标题
-        if (currentConversationId) {
-            setTimeout(() => {
-                const latestConvEl = document.querySelector(`[data-id="${currentConversationId}"] .conversation-header`);
-                if (latestConvEl) {
-                    latestConvEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                } else {
-                    conversationStream.scrollTop = conversationStream.scrollHeight;
-                }
-            }, 100);
-        } else {
-            conversationStream.scrollTop = conversationStream.scrollHeight;
-        }
     }
 
     /**
@@ -380,15 +369,21 @@ document.addEventListener('DOMContentLoaded', async () => {
      */
     function createConversationElement(conv) {
         const div = document.createElement('div');
-        const isCurrentConversation = conv.id === currentConversationId;
-        div.className = `conversation-item ${conv.collapsed && !isCurrentConversation ? 'collapsed' : 'expanded'}`;
+        div.className = `conversation-item ${conv.collapsed ? 'collapsed' : 'expanded'}`;
         div.dataset.id = conv.id;
 
-        if (conv.collapsed && !isCurrentConversation) {
-            // 折叠状态（只有非当前对话才折叠）
+        if (conv.collapsed) {
+            // 折叠状态
             div.innerHTML = `
                 <div class="conversation-header clickable-header" data-conv-id="${conv.id}" style="cursor: pointer;" title="点击展开">
-                    <div class="conversation-question-collapsed">${escapeHTML(conv.question)}</div>
+                    <div class="conversation-question-collapsed">
+                        <span class="question-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                        </span>
+                        <span class="question-text">${escapeHTML(conv.question)}</span>
+                    </div>
                     <div class="conversation-meta">
                         <span>${getResponseCount(conv)} 个AI已回答</span>
                         ${conv.summary ? '<span class="summary-badge">✨ 已总结</span>' : ''}
@@ -397,11 +392,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 </div>
             `;
         } else {
-            // 展开状态（当前对话始终展开）
+            // 展开状态
             const questionDiv = document.createElement('div');
             questionDiv.className = 'conversation-question';
             questionDiv.innerHTML = `
-                <div class="conversation-question-content">${escapeHTML(conv.question)}</div>
+                <div class="conversation-question-content">
+                    <span class="question-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                    </span>
+                    <span class="question-text">${escapeHTML(conv.question)}</span>
+                </div>
                 <div class="conversation-controls" data-conv-id="${conv.id}">
                     <button class="control-btn control-collapse" data-action="collapse" title="折叠">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -608,8 +610,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         selectedFiles = [];
         filePreview.style.display = 'none';
 
-        // 渲染
+        // 渲染并自动滚动到最底部
         renderConversations();
+        setTimeout(() => {
+            conversationStream.scrollTop = conversationStream.scrollHeight;
+        }, 50);
 
         // 发送到各个AI
         try {

@@ -3278,12 +3278,28 @@ body.modal-resizing * {
 }
 
 .conversation-question-collapsed {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     flex: 1;
     font-size: 14px;
     color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
+}
+
+.question-text {
+    overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.question-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    flex-shrink: 0;
 }
 
 .conversation-meta {
@@ -3318,7 +3334,22 @@ body.modal-resizing * {
 
 .conversation-question-content {
     flex: 1;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    background: linear-gradient(145deg, rgba(61, 138, 255, 0.1) 0%, rgba(61, 138, 255, 0.02) 100%);
+    border: 1px solid rgba(61, 138, 255, 0.2);
+    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    border-top-left-radius: 4px;
     word-break: break-word;
+}
+
+.conversation-question-content .question-text {
+    white-space: pre-wrap;
+    line-height: 1.5;
+    word-break: break-word;
+    font-size: 15px;
 }
 
 /* Conversation Controls */

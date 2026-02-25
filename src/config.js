@@ -75,16 +75,17 @@ const AI_CONFIG = {
                 'button[type="submit"]'
             ],
             response: [
-                // Most specific: the direct message content container for assistant messages
-                // Using > to only target direct children to avoid partial matches
-                '.segment-assistant .message-content',
-                'div[class*="message--assistant"] > div[class*="content"]',
-                // Kimi specific class pattern for the full response block
-                'div[class*="message-item--assistant"] [class*="markdown"]',
-                // Fallback broader selectors
+                // Kimi: target the whole assistant message content block
+                // These selectors aim for the FULL response container, not nested children
+                '[class*="segment--assistant"] [class*="message-body"]',
+                '[class*="segment--assistant"] [class*="content"]',
+                '.segment-assistant .content',
+                '.segment-assistant',
+                // Broader assistant message wrapper fallbacks
+                '[class*="message-item"][class*="assistant"]',
+                '[class*="msg"][class*="assistant"] [class*="markdown"]',
                 '.markdown-body',
-                'div[class*="response"]',
-                'div[class*="answer"]'
+                '[class*="chat-segment"][class*="assistant"] [class*="text"]'
             ],
             fileUploadButton: ['button[aria-label*="Upload"]', 'button[aria-label*="上传"]', 'button[title*="Upload"]'],
             fileUploadInput: ['input[type="file"]'],
@@ -164,16 +165,22 @@ const AI_CONFIG = {
                 'button:not([disabled]) svg'
             ],
             response: [
-                'div[class*="answer-content"]',
+                // Qwen/Tongyi: target the full assistant message bubble content
+                // Most specific selectors first to avoid partial matches
+                '[class*="answer-content-inner"]',
+                '[class*="answer-content"]',
                 '.tongyi-markdown',
+                // Tongyi Aliyun version
+                '[class*="ResponseContent"]',
+                '[class*="chatReply"] [class*="content"]',
+                // Generic fallbacks  
                 '.markdown-body',
-                'div[class*="message-content"]',
-                'div[class*="assistant-content"]',
-                'div[class*="bot-content"]',
-                'div[class*="rich-text"]',
-                'div[data-content]',
-                '.message.bubble .content',
-                '[class*="answer"] [class*="content"]'
+                '[class*="assistant-message"] [class*="content"]',
+                '[class*="bot-message"] [class*="content"]',
+                '[class*="ai-message"] [class*="text"]',
+                // Qwen international (chat.qwen.ai)
+                '[data-role="assistant"] [class*="content"]',
+                '[data-role="assistant"]'
             ],
             fileUploadInput: ['input[type="file"]'],
         },

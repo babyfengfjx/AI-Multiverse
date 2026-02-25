@@ -239,50 +239,89 @@ function extractLatestResponse(provider) {
         return { status: 'error', error: 'No response selectors configured' };
     }
 
-    // Try each response selector, find the LAST matching element (most recent response)
-    let lastEl = null;
+    // === Smart element selection ===
+    // Strategy: find ALL matching elements, then group them by their "last AI message container"
+    // to avoid picking a deeply nested sub-element like a table cell inside the response
+    let bestEl = null;
+    let bestSelector = null;
+
     for (const sel of config.selectors.response) {
         try {
-            const elements = document.querySelectorAll(`${sel}:not([data-multiverse-old="true"])`);
-            if (elements.length > 0) {
-                // Always use the last element (most recent response)
-                lastEl = elements[elements.length - 1];
+            const elements = Array.from(document.querySelectorAll(sel))
+                .filter(el => !el.getAttribute('data-multiverse-old'));
 
-                // 如果找到了有效内容，就使用这个选择器
-                const testText = (lastEl.innerText || lastEl.textContent || '').trim();
-                const hasSvg = lastEl.querySelector('svg') !== null;
-                if (testText.length > 0 || hasSvg) {
-                    console.log(`[AI Multiverse] Found response using selector: ${sel}, length: ${testText.length}, hasSvg: ${hasSvg}`);
-                    break;
+            if (elements.length === 0) continue;
+
+            // Among all matches, pick the one with the most text content
+            // that is also the "last" one in document order (most recent AI reply)
+            // But avoid sub-elements: if element A contains element B and both match,
+            // prefer A (the outer one with full content)
+
+            // Get the last matched element in document order
+            let candidate = elements[elements.length - 1];
+
+            // Walk UP from this candidate: if its parent also matches the same selector
+            // and has similar or more content, prefer the parent (avoid sub-elements)
+            let el = candidate;
+            for (let i = 0; i < 5; i++) {
+                const parent = el.parentElement;
+                if (!parent) break;
+                // Check if parent themselves matches any of our response selectors
+                const parentMatchesSel = config.selectors.response.some(s => {
+                    try { return parent.matches(s); } catch (e) { return false; }
+                });
+                if (parentMatchesSel) {
+                    const parentText = (parent.innerText || parent.textContent || '').trim();
+                    const elText = (el.innerText || el.textContent || '').trim();
+                    // If parent has substantially the same or more content, use parent
+                    if (parentText.length >= elText.length * 0.8) {
+                        candidate = parent;
+                        el = parent;
+                        continue;
+                    }
                 }
+                break;
+            }
+
+            const text = (candidate.innerText || candidate.textContent || '').trim();
+            if (text.length > 0 || candidate.querySelector('svg, img, table')) {
+                console.log(`[AI Multiverse] Found response using selector: "${sel}", elements: ${elements.length}, text len: ${text.length}`);
+                bestEl = candidate;
+                bestSelector = sel;
+                break;
             }
         } catch (e) {
             console.warn(`[AI Multiverse] Selector failed: ${sel}`, e);
         }
     }
 
-    if (!lastEl) {
-        // Fallback: try to find any common markdown/response container
+    // Fallback: try common containers
+    if (!bestEl) {
         const fallbackSelectors = [
-            '.markdown-body:not([data-multiverse-old="true"])',
-            '[class*="markdown"]:not([data-multiverse-old="true"])',
-            '[class*="message-content"]:not([data-multiverse-old="true"])',
-            '[class*="response"]:not([data-multiverse-old="true"])',
+            '.markdown-body:not([data-multiverse-old])',
+            '[class*="markdown"]:not([data-multiverse-old])',
+            '[class*="message-content"]:not([data-multiverse-old])',
+            '[class*="assistant"]:not([data-multiverse-old])',
         ];
         for (const sel of fallbackSelectors) {
             try {
                 const elements = document.querySelectorAll(sel);
                 if (elements.length > 0) {
-                    lastEl = elements[elements.length - 1];
+                    bestEl = elements[elements.length - 1];
                     break;
                 }
             } catch (e) { }
         }
     }
 
-    if (!lastEl) {
+    if (!bestEl) {
+        // Debug: log available content on page
+        console.warn('[AI Multiverse] No response element found for provider:', provider);
+        console.warn('[AI Multiverse] Page title:', document.title);
         return { status: 'no_response', text: '' };
     }
+
+    const lastEl = bestEl;
 
     // Remove thinking/reasoning blocks from the DOM element
     const cleanedEl = removeThinkingBlocks(lastEl, provider);
@@ -297,15 +336,13 @@ function extractLatestResponse(provider) {
         trimmed = filterThinkingText(trimmed);
     }
 
-    // Clean up excessive blank lines (more than 2 consecutive newlines)
-    // This is especially important for Grok which tends to have many empty lines
+    // Clean up excessive blank lines
     trimmed = trimmed.replace(/\n{3,}/g, '\n\n');
 
-    // Get the HTML content - preserve original formatting
-    // Clone the element to avoid modifying the original page
+    // Get the HTML content - clone to avoid modifying original page
     const clonedEl = cleanedEl.cloneNode(true);
 
-    // Remove unwanted elements from the clone (buttons, icons, etc.)
+    // Remove unwanted elements (buttons, copy icons, etc.)
     const unwantedSelectors = [
         'button',
         '[role="button"]',
@@ -315,79 +352,44 @@ function extractLatestResponse(provider) {
         '[class*="Copy"]',
         '[class*="download"]',
         '[class*="Download"]',
-        '[class*="icon"]',
-        '[class*="Icon"]',
         '[aria-label*="copy"]',
         '[aria-label*="Copy"]',
-        '[aria-label*="复制"]',
-        '[aria-label*="下载"]',
-        '[aria-label*="download"]',
+        '[aria-label*="\u590d\u5236"]',
+        '[aria-label*="\u4e0b\u8f7d"]',
         '[title*="copy"]',
         '[title*="Copy"]',
-        '[title*="复制"]',
-        '[title*="下载"]',
-        '[title*="download"]',
-        'svg[class*="copy"]',
-        'svg[class*="Copy"]',
-        'svg[aria-label*="copy"]',
-        'svg[aria-label*="Copy"]',
-        'svg[aria-label*="复制"]',
-        // Kimi specific: remove copy icons and text
-        'span:has(svg) + span:contains("复制")',
-        'div:has(svg[class*="copy"])',
-        'div:has(svg[aria-label*="复制"])',
-        // Generic: remove any element that only contains "复制" or "Copy"
-        'span:only-child:contains("复制")',
-        'span:only-child:contains("Copy")',
-        'div:only-child:contains("复制")',
-        'div:only-child:contains("Copy")'
+        '[title*="\u590d\u5236"]',
+        '[title*="\u4e0b\u8f7d"]',
     ];
-
     unwantedSelectors.forEach(selector => {
         try {
             clonedEl.querySelectorAll(selector).forEach(el => el.remove());
-        } catch (e) { /* ignore invalid selectors */ }
+        } catch (e) { }
     });
 
-    // Additional cleanup: remove standalone SVG icons that might be copy buttons
+    // Remove standalone SVG icons (likely copy/action buttons)
     try {
-        const svgs = clonedEl.querySelectorAll('svg');
-        svgs.forEach(svg => {
+        clonedEl.querySelectorAll('svg').forEach(svg => {
             const parent = svg.parentElement;
-            // If SVG is in a small container with minimal text, likely a button
             if (parent && parent.textContent.trim().length < 10) {
-                const text = parent.textContent.trim().toLowerCase();
-                if (text.includes('复制') || text.includes('copy') || text === '') {
+                const t = parent.textContent.trim().toLowerCase();
+                if (t.includes('\u590d\u5236') || t.includes('copy') || t === '') {
                     parent.remove();
                 }
             }
         });
-    } catch (e) { /* ignore */ }
-
-    // Remove empty elements that might be left after button removal
-    try {
-        clonedEl.querySelectorAll('div:empty, span:empty').forEach(el => {
-            // Don't remove if it has a background or border (might be intentional spacing)
-            const style = window.getComputedStyle(el);
-            if (!style.backgroundImage && !style.backgroundColor && !style.border) {
-                el.remove();
-            }
-        });
-    } catch (e) { /* ignore */ }
+    } catch (e) { }
 
     const html = clonedEl.innerHTML || '';
 
     if (!trimmed) {
-        // 使用fallback机制获取文本
         const fallbackText = (lastEl.innerText || lastEl.textContent || '').trim();
         if (fallbackText) {
-            // Also clean up fallback text
-            const cleanedFallback = fallbackText.replace(/\n{3,}/g, '\n\n');
             return {
                 status: getGenerationStatus(provider, lastEl),
-                text: cleanedFallback,
+                text: fallbackText.replace(/\n{3,}/g, '\n\n'),
                 html: html,
-                length: cleanedFallback.length
+                length: fallbackText.length
             };
         }
         return { status: 'no_response', text: '' };
@@ -400,6 +402,7 @@ function extractLatestResponse(provider) {
         length: trimmed.length
     };
 }
+
 
 // Track last known text per provider for change-based detection
 const _lastResponseTexts = {};

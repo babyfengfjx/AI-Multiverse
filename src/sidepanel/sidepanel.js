@@ -460,6 +460,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             const config = AI_CONFIG[provider];
             if (!config) return;
 
+            // Show refresh button for stuck generates or errors
+            const showRefresh = response.status === 'generating' || response.status === 'error' || response.status === 'loading';
+            const refreshBtn = showRefresh ? `
+                <button class="card-refresh-btn" onclick="event.stopPropagation(); window.manualRefreshProvider('${provider}', ${conv.id})" title="手动刷新获取最新回复">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                    </svg>
+                </button>` : `
+                <button class="card-detail-btn" onclick="event.stopPropagation(); window.showResponseDetail('${provider}', ${conv.id})" title="查看详情">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                    </svg>
+                </button>`;
+
             html += `
                 <div class="response-card ${response.status}" data-provider="${provider}" data-conv-id="${conv.id}" style="cursor: pointer;">
                     <div class="response-card-header">
@@ -468,7 +483,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                             <span>${config.name}</span>
                             ${getStatusBadge(response.status)}
                         </div>
-                        ${response.status === 'ok' && response.text ? `<div class="response-char-count">${response.text.length} 字</div>` : ''}
+                        <div class="response-card-actions">
+                            ${response.status === 'ok' && response.text ? `<div class="response-char-count">${response.text.length} 字</div>` : ''}
+                            ${refreshBtn}
+                        </div>
                     </div>
                     <div class="response-card-body">
                         ${renderResponseBody(response)}
@@ -479,6 +497,39 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         return html;
     }
+
+    /**
+     * 手动刷新指定提供商的回复
+     */
+    window.manualRefreshProvider = async function (provider, convId) {
+        const conv = conversations.find(c => c.id === convId);
+        if (!conv) return;
+
+        try {
+            const result = await chrome.runtime.sendMessage({
+                action: 'fetch_all_responses',
+                providers: [provider]
+            });
+
+            if (result && result.status === 'ok' && result.responses) {
+                const response = result.responses[provider];
+                if (response && response.text) {
+                    conv.responses[provider] = {
+                        status: 'ok', // Force ok on manual refresh
+                        text: response.text,
+                        html: response.html || '',
+                        timestamp: Date.now()
+                    };
+                    renderConversations();
+                    showNotification(`已刷新 ${AI_CONFIG[provider]?.name || provider} 的回复`, 'success');
+                } else {
+                    showNotification(`${AI_CONFIG[provider]?.name || provider} 暂无内容，请稍候重试`, 'info');
+                }
+            }
+        } catch (e) {
+            showNotification('刷新失败，请稍候重试', 'error');
+        }
+    };
 
 
     /**

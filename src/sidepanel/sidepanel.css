@@ -920,6 +920,42 @@ body {
     align-items: center;
 }
 
+/* Card action buttons (refresh / detail) */
+.response-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.card-refresh-btn,
+.card-detail-btn {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.card-refresh-btn:hover {
+    background: rgba(255, 165, 0, 0.15);
+    border-color: rgba(255, 165, 0, 0.4);
+    color: #FFA500;
+    transform: rotate(30deg);
+}
+
+.card-detail-btn:hover {
+    background: rgba(61, 138, 255, 0.15);
+    border-color: rgba(61, 138, 255, 0.4);
+    color: var(--accent);
+}
+
 /* 响应卡片状态标记 */
 .response-status-badge {
     font-size: 11px;

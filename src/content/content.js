@@ -203,6 +203,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return;
     }
     if (request.action === 'fill_and_send') {
+        // Reset text-change tracking so previous response doesn't interfere with new one
+        resetProviderTracking(request.provider);
         handleFillAndSend(request.text, request.provider, request.files || [])
             .then(() => sendResponse({ status: 'done' }))
             .catch((err) => sendResponse({ status: 'error', error: err.message }));
@@ -399,26 +401,35 @@ function extractLatestResponse(provider) {
     };
 }
 
-// Track last known text lengths per provider for change-based detection
+// Track last known text per provider for change-based detection
 const _lastResponseTexts = {};
 const _stableCounters = {};
+
+// Reset tracking state for a provider when a new conversation starts
+function resetProviderTracking(provider) {
+    delete _lastResponseTexts[provider];
+    delete _stableCounters[provider];
+}
 
 // === Check if provider is generating ===
 function getGenerationStatus(provider, lastEl) {
     let isGenerating = false;
 
-    // Signal 1: Streaming/animation classes directly on element or ancestors (up to 8 levels)
+    // Signal 1: Only VERY SPECIFIC streaming class names on element or ancestors (up to 5 levels)
+    // Do NOT use generic words like 'loading', 'generating', 'thinking' - too many false positives!
+    const STREAMING_CLASSES = [
+        'result-streaming',       // ChatGPT
+        'ds-markdown--streaming', // DeepSeek
+        'is-streaming',
+        'message-streaming',
+        'response-streaming',
+        'chat-streaming'
+    ];
     if (lastEl) {
         let el = lastEl;
-        for (let i = 0; i < 8 && el; i++) {
-            const cls = el.className || '';
-            if (
-                cls.includes('streaming') ||
-                cls.includes('result-streaming') ||
-                cls.includes('ds-markdown--streaming') ||
-                cls.includes('loading') ||
-                cls.includes('generating') ||
-                cls.includes('thinking') ||
+        for (let i = 0; i < 5 && el; i++) {
+            const cls = (typeof el.className === 'string') ? el.className : '';
+            if (STREAMING_CLASSES.some(sc => cls.includes(sc)) ||
                 el.getAttribute('data-streaming') === 'true' ||
                 el.getAttribute('aria-busy') === 'true'
             ) {
@@ -429,7 +440,7 @@ function getGenerationStatus(provider, lastEl) {
         }
     }
 
-    // Signal 2: Check for visible stop/pause button (universal)
+    // Signal 2: Visible stop/pause button (check actual rendered size, not offsetParent)
     if (!isGenerating) {
         const stopSelectors = [
             'button[aria-label*="Stop"]',
@@ -441,23 +452,16 @@ function getGenerationStatus(provider, lastEl) {
             '[class*="StopButton"]',
             '[data-icon-type*="stop"]',
             '.stopButton',
-            'button.stop',
             '.ds-icon-button--stop',
-            // DeepSeek stop button variant
-            'div[class*="stop"] svg',
-            // Kimi stop button
-            'button[class*="stop"]',
-            // Yuanbao stop
             '[class*="chat-stop"]',
             '[class*="agent-stop"]'
         ];
-
         for (const sel of stopSelectors) {
             try {
                 const btns = document.querySelectorAll(sel);
                 for (const btn of btns) {
                     const rect = btn.getBoundingClientRect();
-                    if (rect.width > 0 && rect.height > 0) {
+                    if (rect.width > 10 && rect.height > 10) { // must be meaningfully sized
                         isGenerating = true;
                         break;
                     }
@@ -467,60 +471,48 @@ function getGenerationStatus(provider, lastEl) {
         }
     }
 
-    // Signal 3: Text-based stop button detection (for CJK UIs without good aria labels)
+    // Signal 3: Text-content stop button detection (exact match only, avoid false positives)
     if (!isGenerating) {
         const allBtns = document.querySelectorAll('button, div[role="button"]');
         for (const btn of allBtns) {
             const txt = (btn.innerText || '').trim();
             const rect = btn.getBoundingClientRect();
-            if (rect.width > 0 && rect.height > 0 &&
+            if (rect.width > 10 && rect.height > 10 &&
                 (txt === '停止' || txt === '停止生成' || txt === '中断回答' || txt === '终止' ||
-                    txt === 'Stop' || txt === 'Stop generating')) {
+                    txt === 'Stop' || txt === 'Stop generating' || txt === 'Pause generation')) {
                 isGenerating = true;
                 break;
             }
         }
     }
 
-    // Signal 4: Provider-specific cursor/spinner animations
+    // Signal 4: Provider-specific well-known indicators
     if (!isGenerating) {
-        const cursorSelectors = {
+        const providerSelectors = {
             kimi: [
-                '.chat-input-area [class*="loading"]',
-                '.chat-layout [class*="cursor"]',
-                // Kimi streaming indicator
-                '[class*="chatStatus"] [class*="loading"]',
-                '[class*="stop"][class*="Btn"]',
-                'div[class*="SendButtonStop"]'
+                'div[class*="SendButtonStop"]',  // Kimi send->stop button swap
+                '[class*="stop"][class*="Btn"]'
             ],
             deepseek: [
                 '.ds-markdown--streaming',
-                '.ds-loading',
-                'div[class*="_thinking"]',
-                // DeepSeek think/loading indicator  
-                'div[class*="Thinking"][class*="loading"]',
-                'span[class*="Thinking"]'
+                '.ds-loading'
             ],
             yuanbao: [
                 '.agent-chat__stop',
-                '[class*="stop-btn"]',
                 '[class*="stopBtn"]',
-                '.stop-generate',
-                '[class*="generating"]',
-                'button[class*="stop"]'
+                '.stop-generate'
             ],
             gemini: ['model-response-animator'],
             grok: ['button[aria-label="Pause generation"]'],
             chatgpt: ['button[data-testid="stop-button"]']
         };
-
-        const selectors = cursorSelectors[provider] || [];
+        const selectors = providerSelectors[provider] || [];
         for (const sel of selectors) {
             try {
                 const el = document.querySelector(sel);
                 if (el) {
                     const rect = el.getBoundingClientRect();
-                    if (rect.width > 0 || rect.height > 0) {
+                    if (rect.width > 0 && rect.height > 0) {
                         isGenerating = true;
                         break;
                     }
@@ -529,22 +521,21 @@ function getGenerationStatus(provider, lastEl) {
         }
     }
 
-    // Signal 5: Text change detection - if text is still growing, it's generating
-    // We maintain a counter: if text length same 3+ consecutive polls -> ok
+    // Signal 5: Text change detection
+    // Only mark as generating if text is ACTIVELY changing between polls
+    // Requires 3 consecutive stable polls before marking as done
     if (!isGenerating && lastEl) {
         const currentText = (lastEl.innerText || lastEl.textContent || '').trim();
         const key = provider;
         const lastText = _lastResponseTexts[key];
 
         if (lastText !== undefined && lastText !== currentText) {
-            // Text is still changing = still generating
             _stableCounters[key] = 0;
             isGenerating = true;
         } else {
-            // Text same as last check
             _stableCounters[key] = (_stableCounters[key] || 0) + 1;
-            // Only mark as done after 2 stable polls in a row
-            if (_stableCounters[key] < 2) {
+            // Need 3 stable polls (not 2) to be sure it's done
+            if (_stableCounters[key] < 3) {
                 isGenerating = true;
             }
         }

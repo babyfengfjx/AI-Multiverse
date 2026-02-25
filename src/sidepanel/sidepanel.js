@@ -222,6 +222,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (conversations.length > 0) {
                     // 按时间戳排序，最新的在最后
                     conversations.sort((a, b) => a.timestamp - b.timestamp);
+
+                    // 强制所有历史对话折叠，保持列表干净
+                    conversations.forEach(c => c.collapsed = true);
+
+                    // 虽然选中了最新的对话，但它已经被折叠了
                     currentConversationId = conversations[conversations.length - 1].id;
                 }
 
@@ -732,6 +737,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
 
+    let currentDetailContext = { provider: null, convId: null, availableProviders: [] };
+
     /**
      * 显示响应详情
      */
@@ -742,11 +749,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         const response = conv.responses[provider];
         if (!response || response.status !== 'ok') return;
 
+        // 保存当前上下文供左右导航使用
+        const availableProviders = conv.providers.filter(p => conv.responses[p] && conv.responses[p].status === 'ok');
+        currentDetailContext = { provider, convId, availableProviders };
+
         // 使用现有的详情模态框
         const detailModal = document.getElementById('detailModal');
         const detailIcon = document.getElementById('detailIcon');
         const detailName = document.getElementById('detailName');
         const detailText = document.getElementById('detailText');
+        const positionText = document.getElementById('positionText');
+        const positionDots = document.getElementById('positionDots');
 
         const config = AI_CONFIG[provider];
         detailIcon.src = config.icon;
@@ -758,8 +771,41 @@ document.addEventListener('DOMContentLoaded', async () => {
             detailText.textContent = response.text;
         }
 
+        // 更新导航点和小标题
+        if (positionText && positionDots) {
+            const currentIndex = availableProviders.indexOf(provider);
+            const total = availableProviders.length;
+            positionText.textContent = `${currentIndex + 1} of ${total}`;
+            positionDots.innerHTML = availableProviders.map((_, idx) =>
+                `<span class="dot ${idx === currentIndex ? 'active' : ''}"></span>`
+            ).join('');
+
+            if (total <= 1) {
+                document.getElementById('modalPositionIndicator')?.classList.add('hidden');
+            } else {
+                document.getElementById('modalPositionIndicator')?.classList.remove('hidden');
+            }
+        }
+
         detailModal.classList.add('active');
     };
+
+    // 绑定模态框左右导航事件
+    document.getElementById('modalNavLeft')?.addEventListener('click', () => {
+        const { provider, convId, availableProviders } = currentDetailContext;
+        if (!convId || availableProviders.length <= 1) return;
+        let currentIndex = availableProviders.indexOf(provider);
+        currentIndex = (currentIndex > 0) ? currentIndex - 1 : availableProviders.length - 1;
+        window.showResponseDetail(availableProviders[currentIndex], convId);
+    });
+
+    document.getElementById('modalNavRight')?.addEventListener('click', () => {
+        const { provider, convId, availableProviders } = currentDetailContext;
+        if (!convId || availableProviders.length <= 1) return;
+        let currentIndex = availableProviders.indexOf(provider);
+        currentIndex = (currentIndex < availableProviders.length - 1) ? currentIndex + 1 : 0;
+        window.showResponseDetail(availableProviders[currentIndex], convId);
+    });
 
     /**
      * 智能总结
@@ -800,7 +846,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             timestamp: Date.now()
         };
 
+        // 展开当前对话以显示总结进度，并在渲染后滚动到底部
+        conv.collapsed = false;
         renderConversations();
+        setTimeout(() => {
+            conversationStream.scrollTop = conversationStream.scrollHeight;
+        }, 50);
 
         try {
             // 发送总结请求
@@ -1121,6 +1172,27 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (copyAllBtn) {
         copyAllBtn.addEventListener('click', () => window.copyAllResponses());
+    }
+
+    // 全部展开/折叠
+    const toggleAllBtn = document.getElementById('toggleAllBtn');
+    let allExpanded = false;
+    if (toggleAllBtn) {
+        toggleAllBtn.addEventListener('click', () => {
+            allExpanded = !allExpanded;
+            conversations.forEach(c => c.collapsed = !allExpanded);
+            renderConversations();
+
+            // 更新按钮标题
+            toggleAllBtn.title = allExpanded ? '全部折叠' : '全部展开';
+
+            // 如果是全部折叠的，不滚动；如果是全部展开，滚到底部
+            if (allExpanded) {
+                setTimeout(() => {
+                    conversationStream.scrollTop = conversationStream.scrollHeight;
+                }, 50);
+            }
+        });
     }
 
     // 总结设置

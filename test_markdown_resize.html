@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown & Resize Test</title>
+    <link rel="stylesheet" href="src/sidepanel/sidepanel.css">
+    <link rel="stylesheet" href="src/lib/github.min.css">
+    <style>
+        body {
+            padding: 20px;
+            background: var(--bg-main);
+            color: var(--text-primary);
+        }
+        .test-section {
+            margin-bottom: 40px;
+            padding: 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: var(--accent);
+        }
+        .test-button {
+            background: var(--accent-gradient);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            margin: 10px 5px;
+        }
+        .test-button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(61, 138, 255, 0.3);
+        }
+        .markdown-preview {
+            margin-top: 20px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            min-height: 200px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .status.success {
+            background: rgba(46, 160, 67, 0.2);
+            border: 1px solid rgba(46, 160, 67, 0.4);
+            color: #2ea043;
+        }
+        .status.error {
+            background: rgba(218, 54, 51, 0.2);
+            border: 1px solid rgba(218, 54, 51, 0.4);
+            color: #da3633;
+        }
+    </style>
+</head>
+<body>
+    <h1>AI Multiverse - Markdown & Resize 测试</h1>
+    
+    <div class="test-section">
+        <h2>1. 库文件加载测试</h2>
+        <div id="libraryStatus"></div>
+        <button class="test-button" onclick="checkLibraries()">检查库文件</button>
+    </div>
+
+    <div class="test-section">
+        <h2>2. Markdown 渲染测试</h2>
+        <button class="test-button" onclick="testMarkdown()">测试 Markdown 渲染</button>
+        <div id="markdownPreview" class="markdown-preview markdown-content"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>3. 详情窗口测试</h2>
+        <button class="test-button" onclick="openTestModal()">打开详情窗口</button>
+        <p style="color: var(--text-secondary); font-size: 14px;">
+            打开后,请检查窗口左右两侧是否有可拖拽的调节手柄(鼠标悬停时会高亮显示)
+        </p>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+        <div class="modal-content detail-content">
+            <div class="modal-header">
+                <div class="modal-title detail-header-info">
+                    <img src="icons/icon.svg" id="detailIcon" class="provider-icon-img" alt="" style="width: 42px; height: 42px;">
+                    <h3 id="detailName">测试 AI 响应</h3>
+                </div>
+                <button class="close-modal-btn" id="closeDetailBtn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="detail-body markdown-content" id="detailText">
+                <!-- Content will be inserted here -->
+            </div>
+            <div class="modal-footer detail-modal-footer">
+                <button class="primary-btn-send" id="copyDetailBtn">复制响应</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="src/lib/marked.min.js"></script>
+    <script src="src/lib/highlight-all.min.js"></script>
+    <script src="src/lib/purify.min.js"></script>
+    
+    <script>
+        // Test Markdown content
+        const testMarkdownContent = `# Markdown 渲染测试
+
+## 这是一个二级标题
+
+这是一段普通文本,包含 **粗体** 和 *斜体* 文字。
+
+### 代码块测试
+
+这是一个行内代码: \`console.log('Hello World')\`
+
+\`\`\`javascript
+// 这是一个代码块
+function greet(name) {
+    console.log(\`Hello, \${name}!\`);
+    return true;
+}
+
+greet('AI Multiverse');
+\`\`\`
+
+### 列表测试
+
+- 列表项 1
+- 列表项 2
+  - 嵌套列表项 2.1
+  - 嵌套列表项 2.2
+- 列表项 3
+
+### 有序列表
+
+1. 第一步
+2. 第二步
+3. 第三步
+
+### 引用
+
+> 这是一段引用文字
+> 可以有多行
+
+### 链接
+
+这是一个 [链接示例](https://example.com)
+
+### 表格
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| Markdown渲染 | ✅ | 支持完整语法 |
+| 代码高亮 | ✅ | 使用highlight.js |
+| 窗口调节 | ✅ | 支持拖拽调节 |
+
+---
+
+测试完成!`;
+
+        // Check if libraries are loaded
+        function checkLibraries() {
+            const statusDiv = document.getElementById('libraryStatus');
+            let html = '';
+            
+            const checks = [
+                { name: 'marked.js', loaded: typeof marked !== 'undefined' },
+                { name: 'highlight.js', loaded: typeof hljs !== 'undefined' },
+                { name: 'DOMPurify', loaded: typeof DOMPurify !== 'undefined' }
+            ];
+            
+            checks.forEach(check => {
+                const status = check.loaded ? 'success' : 'error';
+                const icon = check.loaded ? '✅' : '❌';
+                html += `<div class="status ${status}">${icon} ${check.name}: ${check.loaded ? '已加载' : '未加载'}</div>`;
+            });
+            
+            statusDiv.innerHTML = html;
+            
+            // Configure marked if available
+            if (typeof marked !== 'undefined' && typeof hljs !== 'undefined') {
+                marked.setOptions({
+                    highlight: function(code, lang) {
+                        if (lang && hljs.getLanguage(lang)) {
+                            try {
+                                return hljs.highlight(code, { language: lang }).value;
+                            } catch (e) {
+                                console.error('Highlight error:', e);
+                            }
+                        }
+                        return hljs.highlightAuto(code).value;
+                    },
+                    breaks: true,
+                    gfm: true
+                });
+                console.log('Marked.js configured successfully');
+            }
+        }
+
+        // Test Markdown rendering
+        function testMarkdown() {
+            const preview = document.getElementById('markdownPreview');
+            
+            if (typeof marked === 'undefined') {
+                preview.innerHTML = '<div class="status error">❌ marked.js 未加载,无法渲染 Markdown</div>';
+                return;
+            }
+            
+            try {
+                let html = marked.parse(testMarkdownContent);
+                
+                if (typeof DOMPurify !== 'undefined') {
+                    html = DOMPurify.sanitize(html);
+                }
+                
+                preview.innerHTML = html;
+                
+                // Add copy buttons to code blocks
+                const codeBlocks = preview.querySelectorAll('pre code');
+                codeBlocks.forEach((codeBlock) => {
+                    const pre = codeBlock.parentElement;
+                    
+                    if (!pre.querySelector('.copy-code-btn')) {
+                        const copyBtn = document.createElement('button');
+                        copyBtn.className = 'copy-code-btn';
+                        copyBtn.textContent = 'Copy';
+                        copyBtn.onclick = async () => {
+                            const code = codeBlock.textContent;
+                            await navigator.clipboard.writeText(code);
+                            copyBtn.textContent = 'Copied!';
+                            setTimeout(() => copyBtn.textContent = 'Copy', 2000);
+                        };
+                        pre.appendChild(copyBtn);
+                    }
+                });
+                
+                console.log('Markdown rendered successfully');
+            } catch (e) {
+                console.error('Markdown rendering error:', e);
+                preview.innerHTML = `<div class="status error">❌ 渲染错误: ${e.message}</div>`;
+            }
+        }
+
+        // Open test modal
+        function openTestModal() {
+            const modal = document.getElementById('detailModal');
+            const detailText = document.getElementById('detailText');
+            
+            // Render markdown in modal
+            if (typeof marked !== 'undefined') {
+                let html = marked.parse(testMarkdownContent);
+                if (typeof DOMPurify !== 'undefined') {
+                    html = DOMPurify.sanitize(html);
+                }
+                detailText.innerHTML = html;
+            } else {
+                detailText.textContent = testMarkdownContent;
+            }
+            
+            modal.classList.add('active');
+            
+            // Initialize resize handles
+            setTimeout(() => {
+                initModalResize();
+            }, 100);
+        }
+
+        // Close modal
+        document.getElementById('closeDetailBtn').onclick = () => {
+            document.getElementById('detailModal').classList.remove('active');
+        };
+        
+        document.getElementById('detailModal').onclick = (e) => {
+            if (e.target.id === 'detailModal') {
+                document.getElementById('detailModal').classList.remove('active');
+            }
+        };
+
+        // Modal resize functionality
+        let modalResizeState = {
+            isResizing: false,
+            startX: 0,
+            startWidth: 0,
+            minWidth: 600,
+            maxWidth: 0.95 * window.innerWidth,
+            currentWidth: parseInt(localStorage.getItem('detailModalWidth')) || 1400
+        };
+
+        function initModalResize() {
+            const modalContent = document.querySelector('#detailModal .detail-content');
+            console.log('Initializing modal resize, modalContent:', modalContent);
+            
+            if (!modalContent) {
+                console.error('Modal content not found!');
+                return;
+            }
+
+            // Remove existing handles
+            const existingHandles = modalContent.querySelectorAll('.modal-resize-handle');
+            existingHandles.forEach(handle => handle.remove());
+
+            // Create resize handles with better visibility
+            const resizeHandleLeft = document.createElement('div');
+            resizeHandleLeft.className = 'modal-resize-handle modal-resize-handle-left';
+            resizeHandleLeft.title = '拖拽调节宽度';
+            resizeHandleLeft.setAttribute('data-resize', 'left');
+            
+            const resizeHandleRight = document.createElement('div');
+            resizeHandleRight.className = 'modal-resize-handle modal-resize-handle-right';
+            resizeHandleRight.title = '拖拽调节宽度';
+            resizeHandleRight.setAttribute('data-resize', 'right');
+
+            modalContent.appendChild(resizeHandleLeft);
+            modalContent.appendChild(resizeHandleRight);
+            
+            console.log('Resize handles created');
+
+            // Apply saved width
+            if (modalResizeState.currentWidth) {
+                modalContent.style.width = modalResizeState.currentWidth + 'px';
+                modalContent.style.maxWidth = 'none';
+            }
+
+            // Attach event listeners
+            resizeHandleLeft.addEventListener('mousedown', (e) => startResize(e, 'left'));
+            resizeHandleRight.addEventListener('mousedown', (e) => startResize(e, 'right'));
+            
+            console.log('Event listeners attached');
+            
+            // Force reflow
+            modalContent.offsetHeight;
+            
+            // Verify handles
+            setTimeout(() => {
+                const leftRect = resizeHandleLeft.getBoundingClientRect();
+                const rightRect = resizeHandleRight.getBoundingClientRect();
+                console.log('Left handle:', leftRect);
+                console.log('Right handle:', rightRect);
+            }, 100);
+        }
+
+        function startResize(e, side) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            console.log('Start resize from side:', side);
+            
+            const modalContent = document.querySelector('#detailModal .detail-content');
+            if (!modalContent) return;
+            
+            modalResizeState.isResizing = true;
+            modalResizeState.startX = e.clientX;
+            modalResizeState.startWidth = modalContent.offsetWidth;
+            modalResizeState.resizeSide = side;
+
+            document.addEventListener('mousemove', handleResize);
+            document.addEventListener('mouseup', stopResize);
+            document.body.classList.add('modal-resizing');
+        }
+
+        function handleResize(e) {
+            if (!modalResizeState.isResizing) return;
+
+            const modalContent = document.querySelector('#detailModal .detail-content');
+            if (!modalContent) return;
+            
+            const deltaX = modalResizeState.resizeSide === 'right'
+                ? e.clientX - modalResizeState.startX
+                : modalResizeState.startX - e.clientX;
+
+            let newWidth = modalResizeState.startWidth + (deltaX * 2);
+
+            newWidth = Math.max(modalResizeState.minWidth, newWidth);
+            newWidth = Math.min(modalResizeState.maxWidth, newWidth);
+
+            modalContent.style.width = newWidth + 'px';
+            modalContent.style.maxWidth = 'none';
+            modalResizeState.currentWidth = newWidth;
+        }
+
+        function stopResize() {
+            if (!modalResizeState.isResizing) return;
+
+            modalResizeState.isResizing = false;
+            document.removeEventListener('mousemove', handleResize);
+            document.removeEventListener('mouseup', stopResize);
+            document.body.classList.remove('modal-resizing');
+
+            localStorage.setItem('detailModalWidth', modalResizeState.currentWidth);
+            console.log('Resize stopped, saved width:', modalResizeState.currentWidth);
+        }
+
+        // Auto-check libraries on load
+        window.addEventListener('load', () => {
+            checkLibraries();
+        });
+    </script>
+</body>
+</html>

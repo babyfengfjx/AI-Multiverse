@@ -461,7 +461,8 @@ function getGenerationStatus(provider, lastEl) {
     if (!isGenerating) {
         if (provider === 'kimi') {
             const stopBtn = document.querySelector('.stopButton') || Array.from(document.querySelectorAll('button')).find(btn => btn.innerText && btn.innerText.includes('停止'));
-            if (stopBtn && stopBtn.offsetParent !== null) {
+            const isTyping = document.querySelector('.typingIndicator') || document.querySelector('[class*="loading"]') || document.querySelector('[class*="spinner"]');
+            if ((stopBtn && stopBtn.offsetParent !== null) || (isTyping && isTyping.offsetParent !== null)) {
                 isGenerating = true;
             }
         } else if (provider === 'grok') {
@@ -472,6 +473,13 @@ function getGenerationStatus(provider, lastEl) {
         } else if (provider === 'gemini') {
             const animator = document.querySelector('model-response-animator');
             if (animator && animator.offsetParent !== null) {
+                isGenerating = true;
+            }
+        } else if (provider === 'deepseek') {
+            // Deepseek uses a specific thinking animation and buttons
+            const pauseBtn = Array.from(document.querySelectorAll('div, button')).find(el => el.innerText && (el.innerText.includes('停止生成') || el.innerText.includes('中断')));
+            const isDeepThinking = document.querySelector('.ds-markdown--streaming') || document.querySelector('[class*="animation"]') || document.querySelector('.ds-loading');
+            if ((pauseBtn && pauseBtn.offsetParent !== null) || (isDeepThinking && isDeepThinking.offsetParent !== null)) {
                 isGenerating = true;
             }
         }

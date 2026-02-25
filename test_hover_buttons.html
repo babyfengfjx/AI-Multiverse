@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>悬停显示历史按钮UI测试</title>
+    <style>
+        :root {
+            --bg-main: #0a0e14;
+            --bg-card: rgba(255, 255, 255, 0.05);
+            --border: rgba(255, 255, 255, 0.1);
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+            --accent: #3d8aff;
+            --success: #2ea043;
+            --error: #da3633;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-main);
+            color: var(--text-primary);
+            padding: 20px;
+            margin: 0;
+        }
+
+        .test-container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .history-item {
+            background: linear-gradient(145deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 14px;
+            max-width: 88%;
+            margin-bottom: 15px;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .history-item:hover {
+            background: linear-gradient(145deg, rgba(61, 138, 255, 0.1) 0%, rgba(255, 255, 255, 0.02) 100%);
+            border-color: rgba(61, 138, 255, 0.3);
+            transform: translateX(2px);
+        }
+
+        .history-text {
+            font-size: 14px;
+            line-height: 1.6;
+            color: var(--text-primary);
+            white-space: pre-wrap;
+            margin-bottom: 10px;
+        }
+
+        .history-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            padding-top: 8px;
+        }
+
+        .history-meta {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* --- History Actions Buttons --- */
+        .history-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(10px);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: absolute;
+            right: 14px;
+            bottom: 14px;
+        }
+
+        .history-item:hover .history-actions {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .history-action-btn {
+            background: rgba(61, 138, 255, 0.15);
+            border: 1px solid rgba(61, 138, 255, 0.3);
+            color: #3d8aff;
+            cursor: pointer;
+            padding: 6px;
+            font-size: 13px;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            box-shadow: 0 2px 8px rgba(61, 138, 255, 0.15);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        .history-action-btn:hover {
+            background: rgba(61, 138, 255, 0.25);
+            border-color: rgba(61, 138, 255, 0.5);
+            color: #ffffff;
+            transform: translateY(-3px);
+            box-shadow: 0 6px 16px rgba(61, 138, 255, 0.3);
+        }
+
+        .history-action-btn:active {
+            transform: translateY(-1px);
+            box-shadow: 0 3px 10px rgba(61, 138, 255, 0.25);
+        }
+
+        /* 删除按钮特殊样式 - 保持警示色 */
+        .history-action-btn.delete-btn {
+            background: rgba(218, 54, 51, 0.15);
+            border-color: rgba(218, 54, 51, 0.3);
+            color: #da3633;
+        }
+
+        .history-action-btn.delete-btn:hover {
+            background: rgba(218, 54, 51, 0.25);
+            border-color: rgba(218, 54, 51, 0.5);
+            color: #ff5f5f;
+            box-shadow: 0 6px 16px rgba(218, 54, 51, 0.3);
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: var(--text-primary);
+            text-align: center;
+        }
+
+        .demo-area {
+            margin: 30px 0;
+            padding: 20px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .instructions {
+            font-size: 14px;
+            line-height: 1.6;
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+        }
+
+        .highlight {
+            color: var(--accent);
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1 class="section-title">悬停显示历史按钮UI优化测试</h1>
+        
+        <div class="demo-area">
+            <div class="instructions">
+                <p><span class="highlight">💡 操作说明：</span>将鼠标悬停在下面的消息上，观察按钮的显示效果</p>
+            </div>
+            
+            <div class="history-item">
+                <div class="history-text">这是第一条测试消息，展示了悬停显示按钮的效果。鼠标移上去看看！</div>
+                <div class="history-footer">
+                    <span class="history-meta">14:30 · 3 AI</span>
+                    <div class="history-actions">
+                        <button class="history-action-btn" title="重发">🔄</button>
+                        <button class="history-action-btn" title="编辑">✏️</button>
+                        <button class="history-action-btn delete-btn" title="删除">🗑️</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="history-item">
+                <div class="history-text">这是第二条测试消息，同样支持悬停操作。简洁的设计让界面更加清爽！</div>
+                <div class="history-footer">
+                    <span class="history-meta">15:45 · 2 AI</span>
+                    <div class="history-actions">
+                        <button class="history-action-btn" title="重发">🔄</button>
+                        <button class="history-action-btn" title="编辑">✏️</button>
+                        <button class="history-action-btn delete-btn" title="删除">🗑️</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="history-item">
+                <div class="history-text">第三条测试消息，统一的蓝色玻璃感设计风格，删除按钮仍保持红色警示色。</div>
+                <div class="history-footer">
+                    <span class="history-meta">16:20 · 4 AI</span>
+                    <div class="history-actions">
+                        <button class="history-action-btn" title="重发">🔄</button>
+                        <button class="history-action-btn" title="编辑">✏️</button>
+                        <button class="history-action-btn delete-btn" title="删除">🗑️</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top: 30px; padding: 20px; background: rgba(255,255,255,0.05); border-radius: 10px;">
+            <h3 style="margin-top: 0; color: #3d8aff;">✨ 设计亮点：</h3>
+            <ul style="line-height: 1.6; color: #a0a0a0;">
+                <li>✅ <strong>悬停显示</strong> - 默认隐藏按钮，鼠标悬停时优雅展现</li>
+                <li>✅ <strong>统一蓝色主题</strong> - 采用品牌蓝色玻璃感设计</li>
+                <li>✅ <strong>精致动画</strong> - 流畅的淡入淡出和浮动效果</li>
+                <li>✅ <strong>视觉层次</strong> - 悬停时整条消息有微妙的高亮反馈</li>
+                <li>✅ <strong>删除警示</strong> - 删除按钮保持红色以示重要性</li>
+                <li>✅ <strong>简洁界面</strong> - 平时界面干净，操作时功能完备</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

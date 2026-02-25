@@ -38,7 +38,7 @@ The extension is built with vanilla JavaScript, HTML, and CSS. No build tools (l
 
 3.  **Load the Extension**
     - Click **"Load unpacked"**.
-    - Navigate to and select this folder: `/home/babyfengfjx/Documents/AI-all-IN-one`
+    - Navigate to and select the folder where you downloaded and extracted this extension.
     - Click **Select**.
 
 4.  **Pin the Extension**
@@ -88,8 +88,8 @@ The extension is built with vanilla JavaScript, HTML, and CSS. No build tools (l
     - 打开右上角的 **“开发者模式”** 开关。
 
 3.  **加载扩展程序**
-    - 点击左上角的 **“加载已解压的扩展程序”**。
-    - 选择此文件夹：`/home/babyfengfjx/Documents/AI-all-IN-one`
+    - 点击左上角的 **"加载已解压的扩展程序"**。
+    - 导航到并选择您下载并解压此扩展程序的文件夹。
     - 点击 **选择**。
 
 4.  **固定扩展程序**

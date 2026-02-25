@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Header检查</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .check-item {
+            margin: 10px 0;
+            padding: 10px;
+            background: #2a2a2a;
+            border-radius: 4px;
+        }
+        .ok { color: #4caf50; }
+        .error { color: #f44336; }
+        pre {
+            background: #0a0a0a;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Header按钮检查</h1>
+    <p>请在扩展的开发者工具Console中运行以下代码：</p>
+    
+    <h2>检查脚本</h2>
+    <pre>
+// 检查Header按钮
+console.log('=== Header按钮检查 ===');
+
+const buttons = {
+    '语言切换': document.getElementById('langToggleBtn'),
+    '主题切换': document.getElementById('themeToggleBtn'),
+    '总结设置': document.getElementById('summarizeSettingsBtn'),
+    '选择模型': document.getElementById('openModelsBtn'),
+    '清空历史': document.getElementById('clearHistoryBtn')
+};
+
+console.table(Object.entries(buttons).map(([name, el]) => ({
+    按钮: name,
+    存在: !!el,
+    可见: el ? el.offsetParent !== null : false,
+    display: el ? getComputedStyle(el).display : 'N/A'
+})));
+
+// 检查Header容器
+const header = document.querySelector('.sidebar-header');
+console.log('\nHeader容器:', {
+    存在: !!header,
+    可见: header ? header.offsetParent !== null : false,
+    display: header ? getComputedStyle(header).display : 'N/A',
+    子元素数量: header ? header.children.length : 0
+});
+
+// 检查header-actions
+const headerActions = document.querySelector('.header-actions');
+console.log('\nHeader Actions:', {
+    存在: !!headerActions,
+    可见: headerActions ? headerActions.offsetParent !== null : false,
+    按钮数量: headerActions ? headerActions.querySelectorAll('button').length : 0
+});
+
+// 生成诊断报告
+console.log('\n=== 诊断报告 ===');
+if (!header) {
+    console.error('❌ 错误：找不到 .sidebar-header 元素');
+    console.log('可能原因：HTML文件没有正确加载');
+} else if (header.offsetParent === null) {
+    console.error('❌ 错误：Header被隐藏了');
+    console.log('检查CSS中是否有 display: none 或 visibility: hidden');
+} else if (!headerActions) {
+    console.error('❌ 错误：找不到 .header-actions 元素');
+} else {
+    const visibleButtons = Object.values(buttons).filter(el => el && el.offsetParent !== null).length;
+    if (visibleButtons === 5) {
+        console.log('✅ 正确：所有5个Header按钮都存在且可见');
+    } else {
+        console.warn(`⚠️ 警告：只有 ${visibleButtons}/5 个按钮可见`);
+    }
+}
+    </pre>
+
+    <h2>预期结果</h2>
+    <div class="check-item">
+        <p>应该看到：</p>
+        <ul>
+            <li class="ok">✅ 语言切换按钮存在且可见</li>
+            <li class="ok">✅ 主题切换按钮存在且可见</li>
+            <li class="ok">✅ 总结设置按钮存在且可见</li>
+            <li class="ok">✅ 选择模型按钮存在且可见</li>
+            <li class="ok">✅ 清空历史按钮存在且可见</li>
+        </ul>
+    </div>
+
+    <h2>如果按钮不可见</h2>
+    <div class="check-item">
+        <p>可能的原因：</p>
+        <ol>
+            <li><strong>Chrome缓存</strong>：最常见的原因
+                <ul>
+                    <li>解决：修改 manifest.json 版本号</li>
+                    <li>或者：完全卸载并重新安装扩展</li>
+                </ul>
+            </li>
+            <li><strong>CSS被覆盖</strong>：检查是否有CSS隐藏了header
+                <ul>
+                    <li>在Elements标签页检查 .sidebar-header 的样式</li>
+                </ul>
+            </li>
+            <li><strong>JavaScript错误</strong>：检查Console是否有错误
+                <ul>
+                    <li>如果有错误，可能导致页面渲染不完整</li>
+                </ul>
+            </li>
+        </ol>
+    </div>
+
+    <h2>快速修复</h2>
+    <div class="check-item">
+        <p><strong>方法1：修改版本号（推荐）</strong></p>
+        <pre>
+1. 打开 manifest.json
+2. 找到 "version": "2.0.0"
+3. 改成 "version": "2.0.2"
+4. 保存
+5. 在 chrome://extensions/ 点击刷新
+6. 关闭并重新打开扩展
+        </pre>
+
+        <p><strong>方法2：完全重新安装</strong></p>
+        <pre>
+1. chrome://extensions/
+2. 点击"移除"
+3. 点击"加载已解压的扩展程序"
+4. 选择扩展目录
+5. 打开扩展
+        </pre>
+    </div>
+</body>
+</html>

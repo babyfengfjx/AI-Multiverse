@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>按钮测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #2a2a2a;
+            border-radius: 8px;
+        }
+        .input-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .action-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            border: 1px solid #444;
+            background: transparent;
+            color: #fff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .action-btn:hover {
+            background: #3a3a3a;
+            border-color: #3d8aff;
+        }
+        .action-btn.primary {
+            background: #3d8aff;
+            border-color: #3d8aff;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            background: #1a3a1a;
+            border-radius: 4px;
+        }
+        .error {
+            background: #3a1a1a;
+        }
+    </style>
+</head>
+<body>
+    <h1>AI Multiverse 按钮测试</h1>
+    
+    <div class="test-section">
+        <h2>测试1: 按钮HTML结构</h2>
+        <div class="input-actions">
+            <button class="action-btn" id="attachFileBtn" title="附加文件">📎</button>
+            <button class="action-btn" id="summarizeBtn" title="智能总结" style="display: none;">💬</button>
+            <button class="action-btn" id="copyAllBtn" title="复制全部" style="display: none;">📋</button>
+            <button class="action-btn primary" id="sendBtn" title="发送">➤</button>
+        </div>
+        <div class="status" id="status1">
+            初始状态：智能总结和复制全部按钮隐藏
+        </div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试2: 显示隐藏的按钮</h2>
+        <button onclick="showButtons()">显示智能总结和复制全部按钮</button>
+        <button onclick="hideButtons()">隐藏智能总结和复制全部按钮</button>
+        <div class="status" id="status2"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试3: 按钮状态</h2>
+        <button onclick="disableSummarize()">禁用智能总结</button>
+        <button onclick="enableSummarize()">启用智能总结</button>
+        <div class="status" id="status3"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试4: 检查DOM</h2>
+        <button onclick="checkDOM()">检查DOM结构</button>
+        <pre class="status" id="status4"></pre>
+    </div>
+
+    <script>
+        function showButtons() {
+            document.getElementById('summarizeBtn').style.display = 'flex';
+            document.getElementById('copyAllBtn').style.display = 'flex';
+            document.getElementById('status2').textContent = '✅ 按钮已显示';
+        }
+        
+        function hideButtons() {
+            document.getElementById('summarizeBtn').style.display = 'none';
+            document.getElementById('copyAllBtn').style.display = 'none';
+            document.getElementById('status2').textContent = '✅ 按钮已隐藏';
+        }
+        
+        function disableSummarize() {
+            document.getElementById('summarizeBtn').disabled = true;
+            document.getElementById('status3').textContent = '✅ 智能总结按钮已禁用';
+        }
+        
+        function enableSummarize() {
+            document.getElementById('summarizeBtn').disabled = false;
+            document.getElementById('status3').textContent = '✅ 智能总结按钮已启用';
+        }
+        
+        function checkDOM() {
+            const result = {
+                attachFileBtn: !!document.getElementById('attachFileBtn'),
+                summarizeBtn: !!document.getElementById('summarizeBtn'),
+                copyAllBtn: !!document.getElementById('copyAllBtn'),
+                sendBtn: !!document.getElementById('sendBtn'),
+                floatingActions: !!document.getElementById('floatingActions'),
+                buttonCount: document.querySelectorAll('.input-actions button').length
+            };
+            
+            document.getElementById('status4').textContent = JSON.stringify(result, null, 2);
+            
+            if (result.floatingActions) {
+                document.getElementById('status4').className = 'status error';
+                document.getElementById('status4').textContent += '\n\n❌ 错误：还有浮动按钮！';
+            } else if (result.buttonCount === 4) {
+                document.getElementById('status4').textContent += '\n\n✅ 正确：有4个按钮，没有浮动按钮';
+            }
+        }
+        
+        // 页面加载时自动检查
+        window.onload = checkDOM;
+    </script>
+</body>
+</html>

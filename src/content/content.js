@@ -416,17 +416,54 @@ function resetProviderTracking(provider) {
 
 // === Check if provider is generating ===
 function getGenerationStatus(provider, lastEl) {
+    // Signal 0: Priority Send/Stop Button Detection (Fastest)
+    try {
+        const stopSelectors = [
+            'button[aria-label*="停止"]', 'button[aria-label*="Stop"]',
+            'button[aria-label*="Pause"]', 'button[aria-label*="暂停"]',
+            'button[data-testid*="stop"]', '.agent-chat__stop',
+            'button:has(svg rect)', 'button:has(svg[viewBox*="0 0"] rect)',
+            '[class*="stop-button"]', '.stop-generate', '[class*="SendButtonStop"]',
+            '[class*="agent-stop"]', '.ds-icon-button--stop'
+        ];
+
+        // 1. If any definitive "Stop" button is visible, we ARE generating.
+        for (const sel of stopSelectors) {
+            const btn = document.querySelector(sel);
+            if (btn && btn.getBoundingClientRect().width > 0) {
+                return 'generating';
+            }
+        }
+
+        // 2. If the "Send" button is back and ENABLED, we ARE done.
+        const config = typeof AI_CONFIG !== 'undefined' ? AI_CONFIG[provider] : null;
+        if (config && config.selectors && config.selectors.button) {
+            for (const sel of config.selectors.button) {
+                const sendBtn = document.querySelector(sel);
+                if (sendBtn) {
+                    const rect = sendBtn.getBoundingClientRect();
+                    const isVisible = rect.width > 2 && rect.height > 2;
+                    const isDisabled = sendBtn.disabled ||
+                        sendBtn.hasAttribute('disabled') ||
+                        sendBtn.getAttribute('aria-disabled') === 'true' ||
+                        sendBtn.classList.contains('disabled') ||
+                        window.getComputedStyle(sendBtn).pointerEvents === 'none' ||
+                        (window.getComputedStyle(sendBtn).opacity !== '' && parseFloat(window.getComputedStyle(sendBtn).opacity) < 0.4);
+
+                    if (isVisible && !isDisabled) {
+                        return 'ok';
+                    }
+                }
+            }
+        }
+    } catch (e) { }
+
     let isGenerating = false;
 
-    // Signal 1: Only VERY SPECIFIC streaming class names on element or ancestors (up to 5 levels)
-    // Do NOT use generic words like 'loading', 'generating', 'thinking' - too many false positives!
+    // Signal 1: Specific streaming classes (Fallback)
     const STREAMING_CLASSES = [
-        'result-streaming',       // ChatGPT
-        'ds-markdown--streaming', // DeepSeek
-        'is-streaming',
-        'message-streaming',
-        'response-streaming',
-        'chat-streaming'
+        'result-streaming', 'ds-markdown--streaming', 'is-streaming',
+        'message-streaming', 'response-streaming', 'chat-streaming'
     ];
     if (lastEl) {
         let el = lastEl;
@@ -443,68 +480,10 @@ function getGenerationStatus(provider, lastEl) {
         }
     }
 
-    // Signal 2: Visible stop/pause button (check actual rendered size, not offsetParent)
-    if (!isGenerating) {
-        const stopSelectors = [
-            'button[aria-label*="Stop"]',
-            'button[aria-label*="停止"]',
-            'button[aria-label*="Pause"]',
-            'button[aria-label*="暂停"]',
-            'button[data-testid*="stop"]',
-            '[class*="stop-button"]',
-            '[class*="StopButton"]',
-            '[data-icon-type*="stop"]',
-            '.stopButton',
-            '.ds-icon-button--stop',
-            '[class*="chat-stop"]',
-            '[class*="agent-stop"]'
-        ];
-        for (const sel of stopSelectors) {
-            try {
-                const btns = document.querySelectorAll(sel);
-                for (const btn of btns) {
-                    const rect = btn.getBoundingClientRect();
-                    if (rect.width > 10 && rect.height > 10) { // must be meaningfully sized
-                        isGenerating = true;
-                        break;
-                    }
-                }
-                if (isGenerating) break;
-            } catch (e) { }
-        }
-    }
-
-    // Signal 3: Text-content stop button detection (exact match only, avoid false positives)
-    if (!isGenerating) {
-        const allBtns = document.querySelectorAll('button, div[role="button"]');
-        for (const btn of allBtns) {
-            const txt = (btn.innerText || '').trim();
-            const rect = btn.getBoundingClientRect();
-            if (rect.width > 10 && rect.height > 10 &&
-                (txt === '停止' || txt === '停止生成' || txt === '中断回答' || txt === '终止' ||
-                    txt === 'Stop' || txt === 'Stop generating' || txt === 'Pause generation')) {
-                isGenerating = true;
-                break;
-            }
-        }
-    }
-
-    // Signal 4: Provider-specific well-known indicators
-    if (!isGenerating) {
+    // Signal 2-4: UI Indicators Fallback
+    if (!isGenerating && provider) {
         const providerSelectors = {
-            kimi: [
-                'div[class*="SendButtonStop"]',  // Kimi send->stop button swap
-                '[class*="stop"][class*="Btn"]'
-            ],
-            deepseek: [
-                '.ds-markdown--streaming',
-                '.ds-loading'
-            ],
-            yuanbao: [
-                '.agent-chat__stop',
-                '[class*="stopBtn"]',
-                '.stop-generate'
-            ],
+            deepseek: ['.ds-markdown--streaming', '.ds-loading'],
             gemini: ['model-response-animator'],
             grok: ['button[aria-label="Pause generation"]'],
             chatgpt: ['button[data-testid="stop-button"]']
@@ -513,20 +492,33 @@ function getGenerationStatus(provider, lastEl) {
         for (const sel of selectors) {
             try {
                 const el = document.querySelector(sel);
-                if (el) {
-                    const rect = el.getBoundingClientRect();
-                    if (rect.width > 0 && rect.height > 0) {
-                        isGenerating = true;
-                        break;
-                    }
+                if (el && el.getBoundingClientRect().width > 0) {
+                    isGenerating = true;
+                    break;
                 }
             } catch (e) { }
         }
     }
 
-    // Signal 5: Text change detection
-    // Only mark as generating if text is ACTIVELY changing between polls
-    // Requires 3 consecutive stable polls before marking as done
+    // Signal 5: Completion Anchors
+    if (!isGenerating && lastEl) {
+        const doneSelectors = [
+            'button[aria-label*="复制"]', 'button[aria-label*="Copy"]',
+            'button[aria-label*="重新"]', 'button[aria-label*="Regenerate"]',
+            '[class*="action-button"]', '.copy-button', '.ds-icon-button--copy',
+            'button:has(svg path[d*="M16 4h2a2"])', '[data-testid*="feedback"]'
+        ];
+        for (const sel of doneSelectors) {
+            try {
+                const btn = lastEl.parentElement?.querySelector(sel) || lastEl.querySelector(sel);
+                if (btn && btn.getBoundingClientRect().width > 0) {
+                    return 'ok';
+                }
+            } catch (e) { }
+        }
+    }
+
+    // Signal 6: Text stability fallback
     if (!isGenerating && lastEl) {
         const currentText = (lastEl.innerText || lastEl.textContent || '').trim();
         const key = provider;
@@ -537,8 +529,7 @@ function getGenerationStatus(provider, lastEl) {
             isGenerating = true;
         } else {
             _stableCounters[key] = (_stableCounters[key] || 0) + 1;
-            // Need 3 stable polls (not 2) to be sure it's done
-            if (_stableCounters[key] < 3) {
+            if (_stableCounters[key] < 2) {
                 isGenerating = true;
             }
         }

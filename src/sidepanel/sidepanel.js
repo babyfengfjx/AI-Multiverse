@@ -49,7 +49,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const MAX_FILE_SIZE = 10 * 1024 * 1024;
     const MAX_TOTAL_SIZE = 50 * 1024 * 1024;
-    const POLLING_INTERVAL = 2000;
+    const POLLING_INTERVAL = 800;
 
     // === DOM Elements ===
     const conversationStream = document.getElementById('conversationStream');
@@ -321,6 +321,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                     window.toggleConversation(convId);
                 } else if (action === 'tile') {
                     window.tileCards(convId);
+                } else if (action === 'jump-summary') {
+                    const convEl = btn.closest('.conversation-item');
+                    const summaryCard = convEl.querySelector('.summary-card');
+                    if (summaryCard) {
+                        summaryCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        // 简单的视觉高亮反馈
+                        summaryCard.style.ring = '2px solid var(--primary-color)';
+                        summaryCard.style.outline = '2px solid var(--primary-color)';
+                        setTimeout(() => {
+                            summaryCard.style.ring = 'none';
+                            summaryCard.style.outline = 'none';
+                        }, 1000);
+                    }
                 }
             });
         });
@@ -428,6 +441,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                             <rect x="3" y="14" width="7" height="7"></rect>
                         </svg>
                     </button>
+                    ${conv.summary ? `
+                    <button class="control-btn control-jump-summary" data-action="jump-summary" title="直达智能总结">
+                        ✨
+                    </button>
+                    ` : ''}
                 </div>
             `;
 
@@ -581,11 +599,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     /**
-     * 创建总结卡片 - 支持实时流式、HTML格式、查看详情、文字选择
+     * 创建总结卡片 - 支持实时流式、HTML格式、文字选择
+     * 修改：点击整个卡片查看详情，移除冗余详情按钮
      */
     function createSummaryCard(summary, convId) {
         const div = document.createElement('div');
         div.className = 'summary-card';
+        // 使整个卡片可点击
+        div.style.cursor = 'pointer';
+        div.onclick = (e) => {
+            // 如果用户正在选择文字，不触发详情跳转
+            const selection = window.getSelection();
+            if (selection && selection.toString().length > 0) return;
+            window.showSummaryDetail(convId);
+        };
 
         const isGenerating = summary.status === 'generating' || summary.status === 'loading';
         const modelName = AI_CONFIG[summary.model]?.name || summary.model;
@@ -605,11 +632,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <span class="summary-model">由 ${modelName} 生成</span>
                     ${isGenerating ? '<span class="status-badge generating" style="font-size:11px;">&#x1F504; 生成中...</span>' : ''}
                 </div>
-                ${(!isGenerating && summary.text) ? `
-                <button class="control-btn" onclick="window.showSummaryDetail('${convId}')" title="查看详情" style="font-size:12px; padding: 4px 8px; display:flex; align-items:center; gap:4px;">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
-                    详情
-                </button>` : ''}
             </div>
             <div class="summary-body markdown-content" style="user-select: text; -webkit-user-select: text;">
                 ${bodyContent || '<span style="color: var(--text-secondary); font-style: italic;">正在生成总结...</span>'}
@@ -789,6 +811,69 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     /**
+     * 初始化悬浮直达按钮逻辑
+     */
+    function initFloatJumpButton() {
+        const floatBtn = document.getElementById('floatJumpSummary');
+        if (!floatBtn) return;
+
+        // 按钮点击处理
+        floatBtn.onclick = () => {
+            const convEl = document.querySelector(`.conversation-item[data-id="${currentConversationId}"]`);
+            if (convEl) {
+                const summaryCard = convEl.querySelector('.summary-card');
+                if (summaryCard) {
+                    summaryCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    // 触觉/视觉反馈
+                    summaryCard.style.outline = '2px solid var(--primary-color)';
+                    setTimeout(() => { summaryCard.style.outline = 'none'; }, 1000);
+                }
+            }
+        };
+
+        // 滚动监听：决定按钮何时显示
+        conversationStream.onscroll = () => {
+            if (!currentConversationId) {
+                floatBtn.style.display = 'none';
+                return;
+            }
+
+            const conv = conversations.find(c => c.id === currentConversationId);
+            const convEl = document.querySelector(`.conversation-item[data-id="${currentConversationId}"]`);
+
+            if (!conv || !conv.summary || conv.collapsed || !convEl) {
+                floatBtn.style.display = 'none';
+                return;
+            }
+
+            const summaryCard = convEl.querySelector('.summary-card');
+            if (!summaryCard) {
+                floatBtn.style.display = 'none';
+                return;
+            }
+
+            // 检查总结卡片是否在视野内
+            const rect = summaryCard.getBoundingClientRect();
+            const containerRect = conversationStream.getBoundingClientRect();
+
+            // 如果卡片顶部在容器底部下方，说明还没滑到总结，显示按钮
+            const isSummaryBelow = rect.top > containerRect.bottom - 50;
+            // 如果卡片底部在容器顶部上方，说明已经滑过了总结（虽然总结通常在最后），隐藏按钮
+            const isSummaryAbove = rect.bottom < containerRect.top + 50;
+
+            if (isSummaryBelow && !isSummaryAbove) {
+                floatBtn.style.display = 'flex';
+                floatBtn.style.opacity = '1';
+                floatBtn.style.transform = 'translateY(0)';
+            } else {
+                floatBtn.style.opacity = '0';
+                floatBtn.style.transform = 'translateY(20px)';
+                setTimeout(() => { if (floatBtn.style.opacity === '0') floatBtn.style.display = 'none'; }, 300);
+            }
+        };
+    }
+
+    /**
      * 切换对话折叠状态
      */
     window.toggleConversation = function (convId) {
@@ -796,6 +881,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!conv) return;
 
         conv.collapsed = !conv.collapsed;
+        if (!conv.collapsed) {
+            currentConversationId = convId;
+        }
         renderConversations();
 
         // 如果展开，滚动到该对话
@@ -981,9 +1069,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     /**
-     * 轮询总结结果 - 支持实时流式显示
+     * 轮询总结结果 - 优化：局部更新 DOM 避免闪烁，增加稳定性检测防溢出
      */
     function startPollingSummary(convId, provider) {
+        let lastLocalText = '';
+        let stableCounter = 0;
+
         const interval = setInterval(async () => {
             const conv = conversations.find(c => c.id === convId);
             if (!conv || !conv.summary) {
@@ -1001,38 +1092,86 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const response = result.responses[provider];
 
                     if (response && (response.status === 'generating' || response.status === 'ok') && response.text) {
-                        // 实时更新，无论 generating 还是 ok 状态
+                        const newText = response.text;
+                        const isTextStable = newText === lastLocalText;
+
+                        if (isTextStable && response.status === 'generating') {
+                            stableCounter++;
+                        } else {
+                            stableCounter = 0;
+                        }
+                        lastLocalText = newText;
+
+                        // 稳定检测保底逻辑：
+                        // 如果 text 连续 15 次轮询（约20秒）没变，且已经有了一定内容（>50字），
+                        // 或者网页 provider 已经返回 ok
+                        const isActuallyDone = response.status === 'ok' || (stableCounter >= 15 && newText.length > 50);
+
+                        // 更新内存数据
                         conv.summary = {
                             model: provider,
-                            text: response.text,
+                            text: newText,
                             html: response.html || '',
-                            status: response.status,
+                            status: isActuallyDone ? 'ok' : 'generating',
                             timestamp: Date.now()
                         };
 
-                        // 实时渲染和滚动，让用户看到内容正在生成
-                        renderConversations();
-                        if (isNearBottom()) {
-                            conversationStream.scrollTop = conversationStream.scrollHeight;
-                        }
+                        // 局部更新 UI 避免 flashing
+                        updateSummaryCardUI(convId, conv.summary);
 
-                        if (response.status === 'ok') {
-                            // 总结完成，存档
-                            conv.summary.status = 'ok';
-                            await archiveConversation(convId);
+                        if (isActuallyDone) {
+                            // 总结彻底完成，强制标记并保存到存储，确保重启后内容还在
                             clearInterval(interval);
+                            conv.archived = true;
+                            await saveConversationToStorage(convId);
+                            // 最终全量渲染一次确保状态一致
                             renderConversations();
-                            setTimeout(() => {
-                                conversationStream.scrollTop = conversationStream.scrollHeight;
-                            }, 50);
                             showNotification(t('summarize_complete'), 'success');
                         }
                     }
                 }
             } catch (e) {
-                console.error('[Poll Summary] Error:', e);
+                console.error('[Polling] Error:', e);
             }
-        }, POLLING_INTERVAL);
+        }, 1200);
+    }
+
+    /**
+     * 局部更新总结卡片的 DOM 内容，避免全量 renderConversations() 导致的闪烁
+     */
+    function updateSummaryCardUI(convId, summary) {
+        // 在 DOM 中找到对应的卡片容器
+        const convEl = document.querySelector(`.conversation-item[data-id="${convId}"]`);
+        if (!convEl) return;
+
+        let summaryCard = convEl.querySelector('.summary-card');
+        if (!summaryCard) {
+            // 如果还没渲染卡片（可能是第一次获取到内容），则全量渲染一次
+            renderConversations();
+            return;
+        }
+
+        // 更新状态徽章 (如果有)
+        const badge = summaryCard.querySelector('.status-badge.generating');
+        if (summary.status === 'ok' && badge) {
+            badge.remove();
+        }
+
+        // 更新内容主体
+        const body = summaryCard.querySelector('.summary-body');
+        if (body) {
+            if (summary.html && summary.html.trim()) {
+                // 如果内容没变，不要修改 innerHTML，避免破坏滚动条或正在进行的选择
+                if (body.innerHTML !== summary.html) {
+                    body.innerHTML = summary.html;
+                }
+            } else if (summary.text) {
+                const renderedMarkdown = renderMarkdown(summary.text);
+                if (body.innerHTML !== renderedMarkdown) {
+                    body.innerHTML = renderedMarkdown;
+                }
+            }
+        }
     }
 
     /**
@@ -1473,15 +1612,34 @@ document.addEventListener('DOMContentLoaded', async () => {
             detailContent.style.width = `${newWidth}px`;
         }
 
-        function stopResize() {
+        async function stopResize() {
             isResizing = false;
             document.body.style.userSelect = '';
             document.removeEventListener('mousemove', handleMouseMove);
             document.removeEventListener('mouseup', stopResize);
+
+            // 保存宽度到存储
+            if (detailContent.style.width) {
+                try {
+                    await chrome.storage.local.set({ modalWidth: detailContent.style.width });
+                    console.log('[Modal] Saved width:', detailContent.style.width);
+                } catch (e) {
+                    console.error('[Modal] Save width error:', e);
+                }
+            }
         }
 
         leftHandle.addEventListener('mousedown', startResize);
         rightHandle.addEventListener('mousedown', startResize);
+
+        // 初始化加载保存的宽度
+        chrome.storage.local.get(['modalWidth'], (result) => {
+            if (result.modalWidth && detailContent) {
+                detailContent.style.maxWidth = 'none';
+                detailContent.style.width = result.modalWidth;
+                console.log('[Modal] Restored width:', result.modalWidth);
+            }
+        });
 
         // Reset width when closing modal to avoid it getting stuck huge forever if desired, or keep it.
         // Keeping it is usually what users want for persistence across a session.
@@ -1552,6 +1710,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         selectedFiles = [];
         renderFilePreview();
     }
+
+    // 初始化悬浮按钮
+    initFloatJumpButton();
 
     console.log('[AI Multiverse v2.0] Initialized');
 });

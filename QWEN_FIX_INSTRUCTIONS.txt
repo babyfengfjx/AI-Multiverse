@@ -1,0 +1,89 @@
+千问提交修复说明
+==================
+
+在 src/content/content.js 的 sendMessage 函数中，找到 clickButton 函数（大约第 999 行）
+
+在 for 循环开始之前添加这一行：
+const isQwen = provider === 'qwen' || /qianwen|tongyi|qwen\.ai/i.test(window.location.hostname);
+
+然后将：
+const clickableBtn = targetEl.tagName === 'BUTTON' || targetEl.getAttribute('role') === 'button'
+    ? targetEl
+    : (targetEl.closest('button') || targetEl.closest('[role="button"]') || targetEl.closest('div[class*="Btn"]') || targetEl.closest('div[class*="slot"]') || targetEl);
+
+替换为：
+
+console.log('[AI Multiverse] Found button element:', targetEl.tagName, targetEl.className);
+
+// 千问特殊处理：可能找到的是 SVG 或 span，需要找到真正的可点击元素
+let clickableBtn;
+if (isQwen) {
+    if (targetEl.tagName === 'svg' || targetEl.tagName === 'SVG' || targetEl.tagName === 'SPAN' || targetEl.tagName === 'DIV') {
+        // 向上查找可点击的父元素
+        clickableBtn = targetEl.closest('button') || 
+                       targetEl.closest('div[role="button"]') || 
+                       targetEl.closest('div[class*="Button"]') ||
+                       targetEl.closest('div[class*="send"]') ||
+                       targetEl.closest('div[class*="slot"]') ||
+                       targetEl.parentElement;
+    } else {
+        clickableBtn = targetEl;
+    }
+} else {
+    // 如果找到的是 SVG 等子元素，则提升到真正带点击行为的父节点
+    clickableBtn = targetEl.tagName === 'BUTTON' || targetEl.getAttribute('role') === 'button'
+        ? targetEl
+        ? targetEl
+        : (targetEl.closest('button') || targetEl.closest('[role="button"]') || targetEl.closest('div[class*="Btn"]') || targetEl.closest('div[class*="slot"]') || targetEl);
+}
+
+if (!clickableBtn) {
+    console.log('[AI Multiverse] Could not find clickable parent, attempt', i + 1);
+    await delay(interval);
+    continue;
+}
+
+console.log('[AI Multiverse] Clickable button:', clickableBtn.tagName, clickableBtn.className);
+
+然后在 if (!isDisabled) 块中，将点击逻辑替换为：
+
+console.log('[AI Multiverse] Button is enabled, clicking...');
+await delay(DELAY.SHORT);
+
+// 千问特殊处理：使用更完整的点击序列
+if (isQwen) {
+    console.log('[AI Multiverse] Qwen: Using full click sequence');
+    clickableBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    await delay(50);
+    clickableBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+    await delay(50);
+    clickableBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    
+    if (typeof clickableBtn.click === 'function') {
+        await delay(50);
+        clickableBtn.click();
+    }
+} else {
+    if (provider === 'qwen' || clickableBtn.tagName !== 'BUTTON') {
+        clickableBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        clickableBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    }
+
+    if (typeof clickableBtn.click === 'function') {
+        clickableBtn.click();
+    } else {
+        clickableBtn.dispatchEvent(new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            view: window
+        }));
+    }
+}
+
+console.log('[AI Multiverse] Button clicked successfully');
+return true;
+
+最后在 else 块后添加：
+} else {
+    console.log('[AI Multiverse] Button not found, attempt', i + 1);
+}

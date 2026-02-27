@@ -106,6 +106,10 @@ const I18N = {
         launching: "Launching...",
         closing: "Closing...",
         open_selected: "Open Selected Only",
+        arrange_selected: "Tile Windows",
+        close_all: "Close All",
+        clear_history: "Clear History",
+        toggle_all: "Expand/Collapse All",
 
         // Model Selection
         models_title: "AI Models",
@@ -297,6 +301,10 @@ const I18N = {
         launching: "打开中...",
         closing: "关闭中...",
         open_selected: "仅打开网页",
+        arrange_selected: "平铺窗口",
+        close_all: "关闭全部",
+        clear_history: "清空历史",
+        toggle_all: "全部展开/折叠",
 
         // Model Selection
         models_title: "AI 模型",

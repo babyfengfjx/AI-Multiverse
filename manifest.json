@@ -4,17 +4,18 @@
     "version": "2.0.0",
     "description": "Send messages to multiple AI web interfaces simultaneously (Gemini, Grok, Kimi, DeepSeek, ChatGPT, Qwen). Supports dark/light themes and multi-language (EN/zh-CN).",
     "icons": {
-        "16": "icons/icon.svg",
-        "32": "icons/icon.svg",
-        "48": "icons/icon.svg",
-        "128": "icons/icon.svg"
+        "16": "icons/icon-16.png",
+        "32": "icons/icon-32.png",
+        "48": "icons/icon-48.png",
+        "128": "icons/icon-128.png"
     },
     "permissions": [
         "activeTab",
         "scripting",
         "tabs",
         "storage",
-        "system.display"
+        "system.display",
+        "webRequest"
     ],
     "host_permissions": [
         "*://gemini.google.com/*",
@@ -33,10 +34,10 @@
     "action": {
         "default_title": "AI Multiverse Chat",
         "default_icon": {
-            "16": "icons/icon.svg",
-            "32": "icons/icon.svg",
-            "48": "icons/icon.svg",
-            "128": "icons/icon.svg"
+            "16": "icons/icon-16.png",
+            "32": "icons/icon-32.png",
+            "48": "icons/icon-48.png",
+            "128": "icons/icon-128.png"
         }
     },
     "background": {

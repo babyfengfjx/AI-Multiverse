@@ -1,0 +1,30 @@
+# 忽略所有.md文件
+*.md
+
+# 但不排除README.md
+!README.md
+
+# 忽略node_modules
+node_modules/
+
+# 忽略构建输出和临时文件
+dist/
+build/
+*.log
+*.tmp
+*.temp
+
+# 忽略编辑器相关文件
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# 忽略操作系统相关文件
+.DS_Store
+Thumbs.db
+
+# 忽略其他可能的临时文件
+*.bak
+*.backup
+*~

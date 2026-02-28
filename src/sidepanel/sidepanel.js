@@ -784,10 +784,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
 
-      // 4. Clickable header (collapsed state) or Question area (expanded state)
-      const clickableArea = target.closest(
-        ".conversation-header.clickable-header, .conversation-question",
-      );
+      // 4. Question area (expanded state) only - removed clickable header support
+      const clickableArea = target.closest(".conversation-question");
       if (clickableArea && !button && !questionCopyBtn) {
         // Skip toggle if the user is selecting/has selected text
         const selection = window.getSelection();
@@ -870,7 +868,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (conv.collapsed) {
       // 折叠状态
       div.innerHTML = `
-                <div class="conversation-header clickable-header" data-conv-id="${conv.id}" style="cursor: pointer;">
+                <div class="conversation-header" data-conv-id="${conv.id}">
                     <div class="conversation-question-collapsed">
                         <span class="question-icon">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

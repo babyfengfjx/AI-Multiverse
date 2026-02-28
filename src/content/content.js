@@ -1041,6 +1041,40 @@ function extractLatestResponse(provider) {
     trimmed = trimmed
       .replace(/^已完成深度搜索[（(][^）)]*[）)]\s*/m, "")
       .trim();
+    
+    // 方式5：移除整个深度思考段落（从"深度思考"开始到下一个非思考内容）
+    trimmed = trimmed.replace(/深度思考[\s\S]*?\n[\s\S]*?(?=\n\n|\n[A-Z0-9\u4e00-\u9fa5]|\n[^\n]*$)/g, "").trim();
+    
+    // 方式6：移除包含"深度思考"的多行内容（直到遇到明显的新段落开始）
+    const lines = trimmed.split('\n');
+    let filteredLines = [];
+    let inThinkingBlock = false;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      
+      // 检测是否进入思考块
+      if (line.includes('深度思考') || line.includes('思考中') || line.includes('正在思考')) {
+        inThinkingBlock = true;
+        continue; // 跳过思考内容行
+      }
+      
+      // 检测是否离开思考块（遇到明显的正文开始）
+      if (inThinkingBlock && (
+        line.match(/^[1-9一二三四五六七八九十\u4e00-\u9fa5][\u3001\uff0c\uff1e\uff08\uff09\uff0a\uff1f\uff3c]/) || // 数字列表
+        line.match(/^[•·▪▫]/) || // 项目符号
+        line.match(/^[a-zA-Z\u4e00-\u9fa5]/) || // 字母开头
+        (line.length > 20 && !line.includes('思考')) // 较长且不含思考关键词的正文
+      )) {
+        inThinkingBlock = false;
+      }
+      
+      if (!inThinkingBlock) {
+        filteredLines.push(line);
+      }
+    }
+    
+    trimmed = filteredLines.join('\n').trim();
   }
 
   // ── Gemini "Gemini说" / "Gemini says" 前缀清理 ──────────────────────────

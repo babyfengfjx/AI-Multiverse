@@ -8,7 +8,6 @@ const I18N = {
         // Header
         logo: "AI Multiverse",
         switch_language: "Switch Language",
-        toggle_theme: "Toggle Theme",
         choose_models: "Choose AI Models",
         summarize_settings: "Summarize Settings",
 
@@ -203,7 +202,6 @@ const I18N = {
         // Header
         logo: "AI 多重宇宙",
         switch_language: "切换语言",
-        toggle_theme: "切换主题",
         choose_models: "选择 AI 模型",
         summarize_settings: "智能总结设置",
 

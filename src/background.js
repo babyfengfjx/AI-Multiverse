@@ -62,6 +62,8 @@ let popupWindowId = null;
 
 // Track which windowId belongs to which provider
 let providerWindows = {};
+let summaryWindows = {}; // Track separate windows for summarization
+let isSummarizing = {}; // Track if a provider is currently used for summarization
 let savedLayout = {}; // Store saved window layouts
 
 // === Extension Click/Command Behavior ===
@@ -298,49 +300,69 @@ async function fetchAllResponses(providers) {
     if (!PROVIDER_CONFIG[providerKey]) return;
 
     let tabId = null;
+    const isSummary = isSummarizing[providerKey];
 
-    // Find tab for this provider
-    if (providerWindows[providerKey]) {
-      try {
-        await chrome.windows.get(providerWindows[providerKey].windowId);
-        tabId = providerWindows[providerKey].tabId;
-      } catch (e) {
-        delete providerWindows[providerKey];
-      }
-    }
-
-    if (!tabId) {
-      const config = PROVIDER_CONFIG[providerKey];
-      const patternsToCheck = [config.urlPattern];
-      if (config.urlPatternAlt) patternsToCheck.push(config.urlPatternAlt);
-      if (config.urlPatterns) patternsToCheck.push(...config.urlPatterns);
-
-      // Critical filter to avoid matching all tabs if pattern is missing
-      const uniquePatterns = [
-        ...new Set(
-          patternsToCheck.filter((p) => typeof p === "string" && p.length > 0),
-        ),
-      ];
-
-      for (const pattern of uniquePatterns) {
+    if (isSummary) {
+      if (summaryWindows[providerKey]) {
         try {
-          const tabs = await chrome.tabs.query({ url: pattern });
-          // Skip internal extension tabs and current control panel
-          const validTab = tabs.find(
-            (t) =>
-              t.url &&
-              !t.url.startsWith("chrome-extension://") &&
-              t.windowId !== popupWindowId,
-          );
-          if (validTab) {
-            tabId = validTab.id;
-            providerWindows[providerKey] = {
-              windowId: validTab.windowId,
-              tabId: tabId,
-            };
-            break;
-          }
-        } catch (e) {}
+          await chrome.windows.get(summaryWindows[providerKey].windowId);
+          tabId = summaryWindows[providerKey].tabId;
+        } catch (e) {
+          delete summaryWindows[providerKey];
+        }
+      }
+    } else {
+      // Find chat tab for this provider
+      if (providerWindows[providerKey]) {
+        try {
+          await chrome.windows.get(providerWindows[providerKey].windowId);
+          tabId = providerWindows[providerKey].tabId;
+        } catch (e) {
+          delete providerWindows[providerKey];
+        }
+      }
+
+      if (!tabId) {
+        const config = PROVIDER_CONFIG[providerKey];
+        const patternsToCheck = [config.urlPattern];
+        if (config.urlPatternAlt) patternsToCheck.push(config.urlPatternAlt);
+        if (config.urlPatterns) patternsToCheck.push(...config.urlPatterns);
+
+        // Critical filter to avoid matching all tabs if pattern is missing
+        const uniquePatterns = [
+          ...new Set(
+            patternsToCheck.filter(
+              (p) => typeof p === "string" && p.length > 0,
+            ),
+          ),
+        ];
+
+        // Ensure we don't accidentally pick up the summary tab as a chat tab
+        const summaryTabIdToIgnore = summaryWindows[providerKey]
+          ? summaryWindows[providerKey].tabId
+          : -1;
+
+        for (const pattern of uniquePatterns) {
+          try {
+            const tabs = await chrome.tabs.query({ url: pattern });
+            // Skip internal extension tabs, current control panel, and the summary tab
+            const validTab = tabs.find(
+              (t) =>
+                t.url &&
+                !t.url.startsWith("chrome-extension://") &&
+                t.windowId !== popupWindowId &&
+                t.id !== summaryTabIdToIgnore,
+            );
+            if (validTab) {
+              tabId = validTab.id;
+              providerWindows[providerKey] = {
+                windowId: validTab.windowId,
+                tabId: tabId,
+              };
+              break;
+            }
+          } catch (e) {}
+        }
       }
     }
 
@@ -387,12 +409,15 @@ async function fetchAllResponses(providers) {
 async function handleDiagnoseSelectors(provider) {
   // Find tab for this provider
   let tabId = null;
-  if (providerWindows[provider]) {
+  const useSummaryTab = isSummarizing[provider];
+  const targetWindows = useSummaryTab ? summaryWindows : providerWindows;
+
+  if (targetWindows[provider]) {
     try {
-      await chrome.windows.get(providerWindows[provider].windowId);
-      tabId = providerWindows[provider].tabId;
+      await chrome.windows.get(targetWindows[provider].windowId);
+      tabId = targetWindows[provider].tabId;
     } catch (e) {
-      delete providerWindows[provider];
+      delete targetWindows[provider];
     }
   }
 
@@ -431,75 +456,46 @@ async function handleSummarizeResponses(provider, prompt) {
     throw new Error(`Unknown provider: ${provider}`);
   }
 
+  isSummarizing[provider] = true;
   const config = PROVIDER_CONFIG[provider];
 
-  // Try to find existing tab for this provider
   let tabId = null;
 
-  // First, try to find any existing tab matching the URL pattern
-  const patternsToCheck = [config.urlPattern];
-  if (config.urlPatternAlt) patternsToCheck.push(config.urlPatternAlt);
-  if (config.urlPatterns) patternsToCheck.push(...config.urlPatterns);
-
-  const uniquePatterns = [
-    ...new Set(
-      patternsToCheck.filter((p) => typeof p === "string" && p.length > 0),
-    ),
-  ];
-
-  for (const pattern of uniquePatterns) {
+  // Check saved summaryWindows
+  if (summaryWindows[provider]) {
     try {
-      const tabs = await chrome.tabs.query({ url: pattern });
-      // Skip internal extension tabs
-      const validTab = tabs.find(
-        (t) => t.url && !t.url.startsWith("chrome-extension://"),
-      );
-      if (validTab) {
-        tabId = validTab.id;
-        providerWindows[provider] = {
-          windowId: validTab.windowId,
-          tabId: tabId,
-        };
-        console.log(
-          "[AI Multiverse Background] Found existing tab by URL:",
-          tabId,
-        );
-        break;
-      }
-    } catch (e) {
-      console.warn("[AI Multiverse Background] Error querying tabs:", e);
-    }
-  }
-
-  // If still no tab found, check saved providerWindows
-  if (!tabId && providerWindows[provider]) {
-    try {
-      await chrome.windows.get(providerWindows[provider].windowId);
-      tabId = providerWindows[provider].tabId;
+      await chrome.windows.get(summaryWindows[provider].windowId);
+      tabId = summaryWindows[provider].tabId;
       console.log(
-        "[AI Multiverse Background] Found existing tab from saved windows:",
+        "[AI Multiverse Background] Found existing summary tab:",
         tabId,
       );
     } catch (e) {
-      console.log("[AI Multiverse Background] Saved window not found");
-      delete providerWindows[provider];
+      console.log("[AI Multiverse Background] Saved summary window not found");
+      delete summaryWindows[provider];
     }
   }
 
-  // If no existing tab, create one
+  // If no existing summary tab, create a new window for it
   if (!tabId) {
-    console.log("[AI Multiverse Background] Creating new tab for", provider);
-    const tab = await chrome.tabs.create({
+    console.log(
+      "[AI Multiverse Background] Creating new window for summary:",
+      provider,
+    );
+    const newWin = await chrome.windows.create({
       url: config.baseUrl,
-      active: false,
+      type: "normal",
+      focused: false,
     });
-    tabId = tab.id;
-    providerWindows[provider] = { windowId: tab.windowId, tabId: tabId };
-    console.log("[AI Multiverse Background] Created tab:", tabId);
+    tabId = newWin.tabs[0].id;
+    summaryWindows[provider] = { windowId: newWin.id, tabId: tabId };
+    console.log("[AI Multiverse Background] Created summary tab:", tabId);
 
     // Wait for tab to load with timeout
     await waitForTabLoad(tabId, 30000);
-    console.log("[AI Multiverse Background] Tab loaded");
+    // Allow extra time for hydration
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    console.log("[AI Multiverse Background] Summary tab loaded");
   }
 
   // Ensure content script is injected
@@ -528,14 +524,17 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
     args: [selector, text, provider || ""],
     func: (sel, val, providerName) => {
       const hostname = window.location.hostname;
-      console.log(`[AI Multiverse] Filling ${providerName} with text:`, val);
+      console.log(
+        `[AI Multiverse] Filling ${providerName} with text, length:`,
+        val.length,
+      );
 
+      // ── 通用：找到最后一个可见元素 ──────────────────────────────────────────
       const findEl = (selectors) => {
         if (typeof selectors === "string") selectors = [selectors];
         for (const s of selectors) {
           try {
             const elements = Array.from(document.querySelectorAll(s));
-            // Find the LAST visible element (likely the most recent one at bottom)
             const visibleEl = elements
               .reverse()
               .find(
@@ -544,105 +543,25 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
                   el.getBoundingClientRect().width > 0,
               );
             if (visibleEl) return visibleEl;
-            if (elements.length > 0) return elements[0]; // Fallback to first if none visible
+            if (elements.length > 0) return elements[0];
           } catch (e) {}
         }
         return null;
       };
 
-      const reactFill = (el, v) => {
-        el.focus();
-        // Ensure field is empty first
-        const proto =
-          el.tagName === "TEXTAREA"
-            ? HTMLTextAreaElement.prototype
-            : HTMLInputElement.prototype;
-        const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-        if (setter) {
-          setter.call(el, "");
-          el.value = ""; // Direct set as fallback
-        } else {
-          el.value = "";
-        }
-
-        // Dispatch basic events to clear
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-
-        // Set new value
-        console.log(
-          "[AI Multiverse] Setting textarea/input value, length:",
-          v.length,
-        );
-        if (setter) setter.call(el, v);
-        else el.value = v;
-
-        if (el._valueTracker) el._valueTracker.setValue("");
-
-        const events = ["input", "change", "blur"];
-        events.forEach((type) =>
-          el.dispatchEvent(new Event(type, { bubbles: true })),
-        );
-
-        // Keyboard events for state sync
-        const lastChar = v.slice(-1) || " ";
-        el.dispatchEvent(
-          new KeyboardEvent("keydown", { key: lastChar, bubbles: true }),
-        );
-        el.dispatchEvent(
-          new KeyboardEvent("keyup", { key: lastChar, bubbles: true }),
-        );
-      };
-
-      const ceditFill = (el, v) => {
-        el.focus();
-        try {
-          // Selection handling - use standard execCommand
-          document.execCommand("selectAll", false, null);
-          document.execCommand("delete", false, null);
-        } catch (e) {}
-        el.focus();
-
-        // Use execCommand('insertText') as primary method
-        console.log("[AI Multiverse] Inserting text, length:", v.length);
-
-        let success = false;
-        try {
-          success = document.execCommand("insertText", false, v);
-        } catch (e) {
-          console.warn("[AI Multiverse] execCommand failed:", e);
-        }
-
-        if (!success || el.innerText.trim().length === 0) {
-          console.log("[AI Multiverse] Falling back to textContent");
-          if (providerName === "kimi") el.innerText = v;
-          else el.textContent = v;
-        }
-
-        // --- COMPREHENSIVE STATE SYNC ---
-        // We minimize manual event dispatching to avoid crashing framework state (Slate.js/React)
-        // execCommand already triggers the most important 'input' event.
-
-        try {
-          // One high-level input event is usually enough to signal frameworks to sync
-          el.dispatchEvent(
-            new Event("input", { bubbles: true, composed: true }),
-          );
-          el.dispatchEvent(
-            new Event("change", { bubbles: true, composed: true }),
-          );
-
-          // Optional: simulated keyup to trigger character-based listeners
-          const lastChar = v.slice(-1) || " ";
-          el.dispatchEvent(
-            new KeyboardEvent("keyup", {
-              key: lastChar,
-              bubbles: true,
-              composed: true,
-            }),
-          );
-        } catch (e) {}
-      };
-
+      // ════════════════════════════════════════════════════════════════════════
+      // Gemini (Quill 编辑器 / contenteditable)
+      // 策略：ClipboardEvent("paste") + DataTransfer 携带完整文本
+      //
+      // 原因：execCommand("insertText") 在 Quill 编辑器中对长文本存在以下问题：
+      //   1. 文本超过一定长度时静默截断，导致提示词和 AI 回复内容丢失
+      //   2. 包含特殊字符（如 ━、中文标点）时可能失败
+      //   3. Quill 内部的 Delta 模型未更新，发送按钮一直保持禁用态，无法提交
+      //
+      // paste 方案：
+      //   Quill 的 onPaste 处理器会读取 clipboardData 中的完整 text/plain 并
+      //   正确写入内部 Delta 模型，任意长度文本均可完整填入，按钮随即激活。
+      // ════════════════════════════════════════════════════════════════════════
       if (hostname.includes("gemini.google.com")) {
         const el = findEl([
           'div.ql-editor[contenteditable="true"]',
@@ -651,23 +570,197 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
           'div[contenteditable="true"]',
         ]);
         if (!el) return false;
-        ceditFill(el, val);
+
+        el.focus();
+
+        // ── Step 1: 清空现有内容 ─────────────────────────────────────────────
+        // selectAll + cut：让 Quill 的 cut 处理器把内部 Delta 也清空
+        try {
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        } catch (e) {}
+        try {
+          el.dispatchEvent(
+            new ClipboardEvent("cut", { bubbles: true, cancelable: true }),
+          );
+        } catch (e) {}
+
+        // 兜底：如果 cut 没清空，再用 execCommand delete
+        try {
+          if (el.innerText.trim().length > 0) {
+            document.execCommand("selectAll", false, null);
+            document.execCommand("delete", false, null);
+          }
+        } catch (e) {}
+
+        el.focus();
+
+        // ── 统一处理：分块使用 execCommand 填入完整文本 ───────────────────────
+        // 无论长短文本，都使用 execCommand 分块插入。这样既不会被长度截断，也能完美激活发送按钮
+        console.log(
+          "[AI Multiverse] Gemini: using chunked execCommand for text, length:",
+          val.length,
+        );
+
+        let success = true;
+        const chunkSize = 4000;
+        for (let i = 0; i < val.length; i += chunkSize) {
+          const chunk = val.slice(i, i + chunkSize);
+          try {
+            const chunkSuccess = document.execCommand(
+              "insertText",
+              false,
+              chunk,
+            );
+            if (!chunkSuccess) success = false;
+          } catch (e) {
+            console.warn(
+              "[AI Multiverse] Gemini: execCommand failed for chunk:",
+              e,
+            );
+            success = false;
+          }
+        }
+
+        if (!success || el.innerText.trim().length === 0) {
+          console.log(
+            "[AI Multiverse] Gemini: execCommand failed, using textContent fallback",
+          );
+          el.textContent = val;
+          try {
+            el.dispatchEvent(
+              new InputEvent("beforeinput", {
+                bubbles: true,
+                cancelable: true,
+                inputType: "insertText",
+                data: val,
+              }),
+            );
+            el.dispatchEvent(
+              new Event("input", { bubbles: true, composed: true }),
+            );
+            el.dispatchEvent(
+              new Event("change", { bubbles: true, composed: true }),
+            );
+          } catch (e) {}
+        }
+
+        // ── Step 4: 补发 input / keyup 确保 Quill 按钮状态更新 ──────────────
+        try {
+          el.dispatchEvent(
+            new Event("input", { bubbles: true, composed: true }),
+          );
+          el.dispatchEvent(
+            new Event("change", { bubbles: true, composed: true }),
+          );
+          // keyup 触发 Gemini 内部"输入非空"检测，使发送按钮从 disabled → enabled
+          el.dispatchEvent(
+            new KeyboardEvent("keyup", {
+              key: "a",
+              code: "KeyA",
+              bubbles: true,
+              composed: true,
+            }),
+          );
+        } catch (e) {}
+
+        console.log(
+          "[AI Multiverse] Gemini: fill completed, editor text length:",
+          el.innerText.trim().length,
+        );
         return true;
       }
 
+      // ════════════════════════════════════════════════════════════════════════
+      // Grok (TipTap / ProseMirror 编辑器)
+      // 策略：分块 execCommand("insertText") 主路径，失败回退 textContent
+      // ════════════════════════════════════════════════════════════════════════
       if (hostname.includes("grok.com")) {
         const tiptapList = Array.from(
           document.querySelectorAll("div.tiptap.ProseMirror"),
         );
-        const tiptap =
-          tiptapList.reverse().find((el) => el.offsetParent !== null) ||
+        const el =
+          tiptapList.reverse().find((e) => e.offsetParent !== null) ||
           tiptapList[0] ||
           null;
-        if (!tiptap) return false;
-        ceditFill(tiptap, val);
+        if (!el) return false;
+
+        el.focus();
+        try {
+          document.execCommand("selectAll", false, null);
+          document.execCommand("delete", false, null);
+        } catch (e) {}
+        el.focus();
+
+        let success = true;
+        const chunkSize = 4000;
+        for (let i = 0; i < val.length; i += chunkSize) {
+          const chunk = val.slice(i, i + chunkSize);
+          try {
+            const chunkSuccess = document.execCommand(
+              "insertText",
+              false,
+              chunk,
+            );
+            if (!chunkSuccess) success = false;
+          } catch (e) {
+            console.warn(
+              "[AI Multiverse] Grok: execCommand failed for chunk:",
+              e,
+            );
+            success = false;
+          }
+        }
+
+        if (!success || el.innerText.trim().length === 0) {
+          console.log(
+            "[AI Multiverse] Grok: execCommand failed, using textContent fallback",
+          );
+          el.textContent = val;
+        }
+
+        try {
+          el.dispatchEvent(
+            new InputEvent("beforeinput", {
+              bubbles: true,
+              cancelable: true,
+              inputType: "insertText",
+              data: val,
+            }),
+          );
+          el.dispatchEvent(
+            new Event("input", { bubbles: true, composed: true }),
+          );
+          el.dispatchEvent(
+            new Event("change", { bubbles: true, composed: true }),
+          );
+          const lastChar = val.slice(-1) || " ";
+          el.dispatchEvent(
+            new KeyboardEvent("keyup", {
+              key: lastChar,
+              bubbles: true,
+              composed: true,
+            }),
+          );
+        } catch (e) {}
+
+        console.log("[AI Multiverse] Grok: fill completed");
         return true;
       }
 
+      // ════════════════════════════════════════════════════════════════════════
+      // Kimi (React contenteditable)
+      // 策略：ClipboardEvent("paste") + DataTransfer 携带完整文本
+      // 原因：
+      //   1. innerText 直接赋值后 React reconciliation 会在 100ms 内把 DOM 重置为空
+      //   2. execCommand("insertText") 遇到 \n 会拆成多段分别触发事件，内容混乱
+      //   3. beforeinput/input 事件的 data 字段会被 Kimi 编辑器当作"要插入的内容"执行
+      //   4. paste 事件：Kimi 的 onPaste 处理器会读取 clipboardData 中的完整文本
+      //      并正确写入 React state，多行文本完整保留，不截断
+      // ════════════════════════════════════════════════════════════════════════
       if (
         hostname.includes("kimi.moonshot.cn") ||
         hostname.includes("kimi.com")
@@ -679,10 +772,50 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
           'div[class*="editor"]',
         ]);
         if (!el) return false;
-        ceditFill(el, val);
+
+        el.focus();
+
+        // 先清空现有内容：selectAll + cut 触发 Kimi 的 cut 处理器清空 React state
+        try {
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        } catch (e) {}
+        try {
+          el.dispatchEvent(
+            new ClipboardEvent("cut", { bubbles: true, cancelable: true }),
+          );
+        } catch (e) {}
+
+        // 用 paste 事件携带完整文本，Kimi 的 onPaste 正确更新 React state
+        try {
+          const dt = new DataTransfer();
+          dt.setData("text/plain", val);
+          el.dispatchEvent(
+            new ClipboardEvent("paste", {
+              clipboardData: dt,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        } catch (e) {
+          console.warn("[AI Multiverse] Kimi: paste event failed:", e);
+        }
+
+        console.log(
+          "[AI Multiverse] Kimi: fill completed via paste, length:",
+          val.length,
+        );
         return true;
       }
 
+      // ════════════════════════════════════════════════════════════════════════
+      // DeepSeek (React textarea)
+      // 策略：React value setter + valueTracker 欺骗，确保 React 感知到变化
+      // 独立处理逻辑，不使用 insertText
+      // ════════════════════════════════════════════════════════════════════════
       if (hostname.includes("chat.deepseek.com")) {
         const el = findEl([
           "textarea#chat-input",
@@ -690,10 +823,45 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
           "textarea",
         ]);
         if (!el) return false;
-        reactFill(el, val);
+
+        el.focus();
+        const proto = HTMLTextAreaElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+        if (setter) {
+          setter.call(el, "");
+        } else {
+          el.value = "";
+        }
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+
+        if (setter) setter.call(el, val);
+        else el.value = val;
+        if (el._valueTracker) el._valueTracker.setValue("");
+
+        try {
+          const lastChar = val.slice(-1) || " ";
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          el.dispatchEvent(new Event("blur", { bubbles: true }));
+          el.dispatchEvent(
+            new KeyboardEvent("keydown", { key: lastChar, bubbles: true }),
+          );
+          el.dispatchEvent(
+            new KeyboardEvent("keyup", { key: lastChar, bubbles: true }),
+          );
+        } catch (e) {}
+
+        console.log(
+          "[AI Multiverse] DeepSeek: fill completed, length:",
+          val.length,
+        );
         return true;
       }
 
+      // ════════════════════════════════════════════════════════════════════════
+      // ChatGPT (React contenteditable div)
+      // 策略：分块 execCommand("insertText") 主路径，失败回退 textContent
+      // ════════════════════════════════════════════════════════════════════════
       if (hostname.includes("chatgpt.com")) {
         const el = findEl([
           "div#prompt-textarea",
@@ -701,18 +869,110 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
           'div[contenteditable="true"]',
         ]);
         if (!el) return false;
-        if (el.tagName === "TEXTAREA" || el.tagName === "INPUT")
-          reactFill(el, val);
-        else ceditFill(el, val);
+
+        // ChatGPT 有时也用 textarea
+        if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+          el.focus();
+          const proto =
+            el.tagName === "TEXTAREA"
+              ? HTMLTextAreaElement.prototype
+              : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+          if (setter) setter.call(el, "");
+          else el.value = "";
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          if (setter) setter.call(el, val);
+          else el.value = val;
+          if (el._valueTracker) el._valueTracker.setValue("");
+          try {
+            const lastChar = val.slice(-1) || " ";
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            el.dispatchEvent(new Event("blur", { bubbles: true }));
+            el.dispatchEvent(
+              new KeyboardEvent("keydown", { key: lastChar, bubbles: true }),
+            );
+            el.dispatchEvent(
+              new KeyboardEvent("keyup", { key: lastChar, bubbles: true }),
+            );
+          } catch (e) {}
+        } else {
+          el.focus();
+          try {
+            document.execCommand("selectAll", false, null);
+            document.execCommand("delete", false, null);
+          } catch (e) {}
+          el.focus();
+          let success = true;
+          const chunkSize = 4000;
+          for (let i = 0; i < val.length; i += chunkSize) {
+            const chunk = val.slice(i, i + chunkSize);
+            try {
+              const chunkSuccess = document.execCommand(
+                "insertText",
+                false,
+                chunk,
+              );
+              if (!chunkSuccess) success = false;
+            } catch (e) {
+              console.warn(
+                "[AI Multiverse] ChatGPT: execCommand failed for chunk:",
+                e,
+              );
+              success = false;
+            }
+          }
+
+          if (!success || el.innerText.trim().length === 0) {
+            console.log(
+              "[AI Multiverse] ChatGPT: execCommand failed, using textContent fallback",
+            );
+            el.textContent = val;
+          }
+          try {
+            el.dispatchEvent(
+              new InputEvent("beforeinput", {
+                bubbles: true,
+                cancelable: true,
+                inputType: "insertText",
+                data: val,
+              }),
+            );
+            el.dispatchEvent(
+              new Event("input", { bubbles: true, composed: true }),
+            );
+            el.dispatchEvent(
+              new Event("change", { bubbles: true, composed: true }),
+            );
+            const lastChar = val.slice(-1) || " ";
+            el.dispatchEvent(
+              new KeyboardEvent("keyup", {
+                key: lastChar,
+                bubbles: true,
+                composed: true,
+              }),
+            );
+          } catch (e) {}
+        }
+
+        console.log(
+          "[AI Multiverse] ChatGPT: fill completed, length:",
+          val.length,
+        );
         return true;
       }
 
+      // ════════════════════════════════════════════════════════════════════════
+      // 通义千问 (Slate.js contenteditable)
+      // 策略：beforeinput(insertText, data=全文) —— Slate 监听 beforeinput 更新内部 state
+      // 注意：不能先手动写 DOM 再发 beforeinput，否则 Slate 会重复插入
+      // 独立处理逻辑，不使用 insertText
+      // ════════════════════════════════════════════════════════════════════════
       if (
         hostname.includes("qianwen") ||
         hostname.includes("tongyi.aliyun.com") ||
         hostname.includes("qwen.ai")
       ) {
-        // 千问使用 Slate.js 编辑器
         const el = findEl([
           'div[role="textbox"]',
           'div[data-slate-editor="true"]',
@@ -722,31 +982,38 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
         ]);
         if (!el) return false;
 
+        // 千问有时也用 textarea
         if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
-          reactFill(el, val);
+          el.focus();
+          const proto =
+            el.tagName === "TEXTAREA"
+              ? HTMLTextAreaElement.prototype
+              : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+          if (setter) setter.call(el, "");
+          else el.value = "";
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          if (setter) setter.call(el, val);
+          else el.value = val;
+          if (el._valueTracker) el._valueTracker.setValue("");
+          try {
+            const lastChar = val.slice(-1) || " ";
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            el.dispatchEvent(new Event("blur", { bubbles: true }));
+            el.dispatchEvent(
+              new KeyboardEvent("keydown", { key: lastChar, bubbles: true }),
+            );
+            el.dispatchEvent(
+              new KeyboardEvent("keyup", { key: lastChar, bubbles: true }),
+            );
+          } catch (e) {}
+          console.log("[AI Multiverse] Qwen textarea: fill completed");
           return true;
         }
 
-        // Slate.js contenteditable 编辑器
-        //
-        // 【诊断结论】execCommand('insertText') 在扩展 executeScript 上下文中
-        // 完全不触发 beforeinput 事件（诊断确认：0 个事件被捕获），它只是直接
-        // 操作 DOM，Slate.js 的状态监听依赖 beforeinput，因此 execCommand 无法
-        // 让 Slate 更新内部 state，发送按钮的 disabled-ZaDDJC 类永远不会被移除。
-        //
-        // 【正确方案】Selection API 全选 + 直接 beforeinput(insertText)
-        //   1. focus 编辑器
-        //   2. 通过 Selection API 全选现有内容（不触发任何 Slate 事件）
-        //   3. dispatch beforeinput(insertText, val)
-        //      → Slate 收到事件，用 val 替换当前 selection
-        //      → Slate 更新内部 state = val
-        //      → React 重渲染，operateBtn 移除 disabled-ZaDDJC 类，按钮点亮 ✅
-        //
-        // 【无重复原因】beforeinput 之前没有任何 DOM 手动插入文字操作，
-        // MutationObserver 不会预先把 val 同步到 state，Slate 只处理一次。
+        // Slate.js contenteditable：全选 + beforeinput(insertText, data=全文)
         el.focus();
-
-        // 全选现有内容（Selection API 不触发 Slate 事件，只设置 selection range）
         try {
           const sel = window.getSelection();
           const range = document.createRange();
@@ -755,7 +1022,6 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
           sel.addRange(range);
         } catch (e) {}
 
-        // 直接触发 beforeinput(insertText) — Slate 处理后更新 state，发送按钮点亮
         el.dispatchEvent(
           new InputEvent("beforeinput", {
             bubbles: true,
@@ -764,22 +1030,94 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
             data: val,
           }),
         );
-
-        // 补充 input/change 确保所有监听器都能感知到内容变化
         el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
 
-        console.log("[AI Multiverse] Qwen: direct beforeinput fill completed");
+        console.log(
+          "[AI Multiverse] Qwen Slate: fill completed, length:",
+          val.length,
+        );
         return true;
       }
 
+      // ════════════════════════════════════════════════════════════════════════
+      // 腾讯元宝 (Quill 编辑器 / contenteditable)
+      // 策略：分块 execCommand("insertText") 主路径，失败回退 textContent
+      // ════════════════════════════════════════════════════════════════════════
       if (hostname.includes("yuanbao.tencent.com")) {
         const el = findEl([".ql-editor", 'div[contenteditable="true"]']);
         if (!el) return false;
-        ceditFill(el, val);
+
+        el.focus();
+        try {
+          document.execCommand("selectAll", false, null);
+          document.execCommand("delete", false, null);
+        } catch (e) {}
+        el.focus();
+
+        let success = true;
+        const chunkSize = 4000;
+        for (let i = 0; i < val.length; i += chunkSize) {
+          const chunk = val.slice(i, i + chunkSize);
+          try {
+            const chunkSuccess = document.execCommand(
+              "insertText",
+              false,
+              chunk,
+            );
+            if (!chunkSuccess) success = false;
+          } catch (e) {
+            console.warn(
+              "[AI Multiverse] Yuanbao: execCommand failed for chunk:",
+              e,
+            );
+            success = false;
+          }
+        }
+
+        if (!success || el.innerText.trim().length === 0) {
+          console.log(
+            "[AI Multiverse] Yuanbao: execCommand failed, using textContent fallback",
+          );
+          el.textContent = val;
+        }
+
+        try {
+          // 触发长文本所需的 input/beforeinput 事件
+          el.dispatchEvent(
+            new InputEvent("beforeinput", {
+              bubbles: true,
+              cancelable: true,
+              inputType: "insertText",
+              data: val,
+            }),
+          );
+          el.dispatchEvent(
+            new Event("input", { bubbles: true, composed: true }),
+          );
+          el.dispatchEvent(
+            new Event("change", { bubbles: true, composed: true }),
+          );
+          const lastChar = val.slice(-1) || " ";
+          el.dispatchEvent(
+            new KeyboardEvent("keyup", {
+              key: lastChar,
+              bubbles: true,
+              composed: true,
+            }),
+          );
+        } catch (e) {}
+
+        console.log(
+          "[AI Multiverse] Yuanbao: fill completed, length:",
+          val.length,
+        );
         return true;
       }
 
+      // ════════════════════════════════════════════════════════════════════════
+      // 通用兜底（未匹配到具体模型时）
+      // ════════════════════════════════════════════════════════════════════════
       const genericEl = findEl([
         sel,
         "textarea",
@@ -787,9 +1125,34 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
         'div[role="textbox"]',
       ]);
       if (!genericEl) return false;
-      if (genericEl.tagName === "TEXTAREA" || genericEl.tagName === "INPUT")
-        reactFill(genericEl, val);
-      else ceditFill(genericEl, val);
+
+      if (genericEl.tagName === "TEXTAREA" || genericEl.tagName === "INPUT") {
+        genericEl.focus();
+        genericEl.value = val;
+        genericEl.dispatchEvent(new Event("input", { bubbles: true }));
+        genericEl.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
+        genericEl.focus();
+        try {
+          document.execCommand("selectAll", false, null);
+          document.execCommand("delete", false, null);
+        } catch (e) {}
+        let success = false;
+        try {
+          success = document.execCommand("insertText", false, val);
+        } catch (e) {}
+        if (!success || genericEl.innerText.trim().length === 0) {
+          genericEl.textContent = val;
+        }
+        genericEl.dispatchEvent(
+          new Event("input", { bubbles: true, composed: true }),
+        );
+        genericEl.dispatchEvent(
+          new Event("change", { bubbles: true, composed: true }),
+        );
+      }
+
+      console.log("[AI Multiverse] Generic fallback: fill completed");
       return true;
     },
   });
@@ -1264,6 +1627,10 @@ async function handleBroadcast(message, providers, files = []) {
 
 async function sendToProvider(providerKey, message, files = []) {
   if (!PROVIDER_CONFIG[providerKey]) return;
+
+  // Clear summarizing flag since this is a chat message
+  isSummarizing[providerKey] = false;
+
   const config = PROVIDER_CONFIG[providerKey];
   let tabId = null;
 
@@ -1298,11 +1665,16 @@ async function sendToProvider(providerKey, message, files = []) {
     for (const pattern of uniquePatterns) {
       try {
         const tabs = await chrome.tabs.query({ url: pattern });
+        // Avoid picking up the extension's own tabs and the summary tab
+        const summaryTabIdToIgnore = summaryWindows[providerKey]
+          ? summaryWindows[providerKey].tabId
+          : -1;
         const validTab = tabs.find(
           (t) =>
             t.url &&
             !t.url.startsWith("chrome-extension://") &&
-            t.windowId !== popupWindowId,
+            t.windowId !== popupWindowId &&
+            t.id !== summaryTabIdToIgnore,
         );
         if (validTab) {
           tabId = validTab.id;
@@ -1392,12 +1764,17 @@ async function handleLaunchOnly(providers) {
     for (const pattern of uniquePatterns) {
       try {
         const tabs = await chrome.tabs.query({ url: pattern });
+        const summaryTabIdToIgnore = summaryWindows[providerKey]
+          ? summaryWindows[providerKey].tabId
+          : -1;
         const validTab = tabs.find(
           (t) =>
             t.url &&
             !t.url.startsWith("chrome-extension://") &&
-            t.windowId !== popupWindowId,
+            t.windowId !== popupWindowId &&
+            t.id !== summaryTabIdToIgnore,
         );
+
         if (validTab) {
           foundTab = validTab;
           break;

@@ -186,6 +186,30 @@ function nodeToMarkdown(node, listDepth) {
       }
       return "\n" + mdRows.join("\n") + "\n\n";
     }
+    case "sup": {
+      var supTxt = children().trim();
+      if (!supTxt) return "";
+      // DeepSeek 等平台把引用角标存为 "-数字" 格式（如 "-1"、"-5"），
+      // 提取后相邻角标拼接成 "-1-5-9" 这样的负数串。
+      // 统一处理：去掉前导 "-"，若为纯数字则格式化为 [N]，否则保留原文。
+      var supCleaned = supTxt.replace(/^-+/, "").trim();
+      if (!supCleaned) return "";
+      if (/^\d+$/.test(supCleaned)) return "[" + supCleaned + "]";
+      // 可能是多个角标连续拼接，如 "1-5-9" 或 "-1-5-9"
+      var multiRef = supCleaned.split("-").filter(function (s) {
+        return /^\d+$/.test(s.trim());
+      });
+      if (multiRef.length > 0) {
+        return multiRef
+          .map(function (n) {
+            return "[" + n.trim() + "]";
+          })
+          .join("");
+      }
+      return supCleaned;
+    }
+    case "sub":
+      return children().trim();
     case "script":
     case "style":
     case "noscript":
@@ -272,7 +296,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   ];
   let conversations = []; // 所有对话
   let currentConversationId = null; // 当前对话ID
-  let currentTheme = "dark";
   let currentLang = "zh-CN";
   let selectedFiles = [];
   let summarizeModel = "gemini";
@@ -328,11 +351,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   const confirmModelsBtn = document.getElementById("confirmModelsBtn");
   const selectionBadge = document.getElementById("selectionBadge");
   const clearHistoryBtn = document.getElementById("clearHistoryBtn");
-  const themeToggleBtn = document.getElementById("themeToggleBtn");
-  const langToggleBtn = document.getElementById("langToggleBtn");
+    const langToggleBtn = document.getElementById("langToggleBtn");
 
   // === Initialization ===
-  loadTheme();
   loadLanguage();
   loadSelectedProviders();
   loadSummarizeSettings();
@@ -628,6 +649,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // 更新操作按钮状态
     updateActionButtons();
+    
+    // 更新全部展开/折叠按钮的标题
+    const toggleAllBtn = document.getElementById("toggleAllBtn");
+    if (toggleAllBtn) {
+      const hasExpandedConversations = conversations.some(c => !c.collapsed);
+      toggleAllBtn.title = hasExpandedConversations ? "全部折叠" : "全部展开";
+    }
   }
 
   /**
@@ -727,7 +755,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           window.manualRefreshProvider(provider, convId);
         } else if (action === "detail") {
           window.showResponseDetail(provider, convId);
-        } else if (action === "collapse" || action === "expand") {
+        } else if (action === "collapse") {
           window.toggleConversation(convId);
         } else if (action === "tile") {
           window.tileCards(convId);
@@ -896,11 +924,6 @@ document.addEventListener("DOMContentLoaded", async () => {
                     <button class="control-btn control-collapse" data-action="collapse" title="折叠">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="18 15 12 9 6 15"></polyline>
-                        </svg>
-                    </button>
-                    <button class="control-btn control-expand" data-action="expand" title="展开全部">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
                         </svg>
                     </button>
                     <button class="control-btn control-tile" data-action="tile" title="平铺布局">
@@ -1104,8 +1127,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     } else if (response.text && response.text.trim()) {
       markdown = response.text;
     }
-    if (!markdown.trim())
-      return '<span class="loading-text">等待响应...</span>';
+    // ── 修复：trim() 后再渲染，防止 Gemini 等平台响应文本开头的大量空白行
+    // 在 marked.js 中，开头的空行会被渲染成空 <p></p> 或 <br> 标签，
+    // 导致内容框顶部出现大片空白。
+    markdown = markdown.trim();
+    if (!markdown) return '<span class="loading-text">等待响应...</span>';
     return (
       '<div class="markdown-content">' + renderMarkdown(markdown) + "</div>"
     );
@@ -1169,12 +1195,24 @@ document.addEventListener("DOMContentLoaded", async () => {
       summary.status === "generating" || summary.status === "loading";
     const modelName = AI_CONFIG[summary.model]?.name || summary.model;
 
-    // Prefer HTML from the AI page (rich format), fallback to markdown render
+    // 与 normalizeAndRender 保持一致：先转 markdown 再 trim() 再渲染，
+    // 避免直接使用 summary.html 时开头的空白节点/空行在重新打开后渲染成大片空白。
     let bodyContent = "";
-    if (summary.html && summary.html.trim()) {
-      bodyContent = summary.html;
-    } else if (summary.text) {
-      bodyContent = renderMarkdown(summary.text);
+    if (!isGenerating) {
+      let markdown = "";
+      if (summary.html && summary.html.trim()) {
+        try {
+          markdown = htmlToMarkdown(summary.html);
+        } catch (e) {
+          markdown = summary.text || "";
+        }
+      } else if (summary.text && summary.text.trim()) {
+        markdown = summary.text;
+      }
+      markdown = markdown.trim();
+      if (markdown) {
+        bodyContent = renderMarkdown(markdown);
+      }
     }
 
     div.innerHTML = `
@@ -1394,6 +1432,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     const floatBtn = document.getElementById("floatJumpSummary");
     if (!floatBtn) return;
 
+    // 确保初始状态为隐藏
+    floatBtn.style.display = "none";
+    floatBtn.style.opacity = "0";
+
     // 按钮点击处理
     floatBtn.onclick = () => {
       const convEl = document.querySelector(
@@ -1412,8 +1454,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     };
 
-    // 滚动监听：决定按钮何时显示
-    conversationStream.onscroll = () => {
+    // 统一的可见性更新函数（滚动时和状态变化时都调用）
+    function updateFloatBtnVisibility() {
       if (!currentConversationId) {
         floatBtn.style.display = "none";
         return;
@@ -1441,7 +1483,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       // 如果卡片顶部在容器底部下方，说明还没滑到总结，显示按钮
       const isSummaryBelow = rect.top > containerRect.bottom - 50;
-      // 如果卡片底部在容器顶部上方，说明已经滑过了总结（虽然总结通常在最后），隐藏按钮
+      // 如果卡片底部在容器顶部上方，说明已经滑过了总结，隐藏按钮
       const isSummaryAbove = rect.bottom < containerRect.top + 50;
 
       if (isSummaryBelow && !isSummaryAbove) {
@@ -1455,7 +1497,16 @@ document.addEventListener("DOMContentLoaded", async () => {
           if (floatBtn.style.opacity === "0") floatBtn.style.display = "none";
         }, 300);
       }
-    };
+    }
+
+    // 滚动监听
+    conversationStream.onscroll = updateFloatBtnVisibility;
+
+    // 暴露给外部调用，方便在总结生成后/对话切换时刷新按钮状态
+    floatBtn._updateVisibility = updateFloatBtnVisibility;
+
+    // 初始化时立即检查一次（此时无总结，确保隐藏）
+    updateFloatBtnVisibility();
   }
 
   /**
@@ -1490,28 +1541,16 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
       }, 100);
     }
-  };
 
-  /**
-   * 展开全部卡片（以模态框形式查看）
-   */
-  window.expandAllCards = function (convId) {
-    const conv = conversations.find((c) => c.id === convId);
-    if (!conv) return;
-
-    // 找到第一个完成的响应并显示详情
-    const firstCompletedProvider = conv.providers.find((p) => {
-      const resp = conv.responses[p];
-      return resp && resp.status === "ok";
-    });
-
-    if (firstCompletedProvider) {
-      window.showResponseDetail(firstCompletedProvider, convId);
-    } else {
-      showNotification(t("no_completed_responses"), "info");
+    // 更新全部展开/折叠按钮的标题
+    const toggleAllBtn = document.getElementById("toggleAllBtn");
+    if (toggleAllBtn) {
+      const hasExpandedConversations = conversations.some(c => !c.collapsed);
+      toggleAllBtn.title = hasExpandedConversations ? "全部折叠" : "全部展开";
     }
   };
 
+  
   /**
    * 平铺布局切换
    */
@@ -1598,7 +1637,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     detailModal.classList.add("active");
   };
 
-  // 绑定模态框左右导航事件
+  // 绑定模态框左右导航事件（点击）
   document.getElementById("modalNavLeft")?.addEventListener("click", () => {
     const { provider, convId, availableProviders } = currentDetailContext;
     if (!convId || availableProviders.length <= 1) return;
@@ -1615,6 +1654,52 @@ document.addEventListener("DOMContentLoaded", async () => {
     currentIndex =
       currentIndex < availableProviders.length - 1 ? currentIndex + 1 : 0;
     window.showResponseDetail(availableProviders[currentIndex], convId);
+  });
+
+  // ── 键盘方向键导航：ArrowLeft / ArrowRight ───────────────────────────────
+  // 当 detailModal 处于打开状态时，监听键盘左右箭头实现卡片切换。
+  // 使用持久化的全局 handler，避免重复绑定。
+  document.addEventListener("keydown", (e) => {
+    const detailModal = document.getElementById("detailModal");
+    if (!detailModal || !detailModal.classList.contains("active")) return;
+    // 排除输入框内的按键事件，避免干扰用户正在输入
+    if (
+      e.target &&
+      (e.target.tagName === "INPUT" ||
+        e.target.tagName === "TEXTAREA" ||
+        e.target.isContentEditable)
+    )
+      return;
+
+    const { provider, convId, availableProviders } = currentDetailContext;
+    if (!convId || availableProviders.length <= 1) return;
+
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      let idx = availableProviders.indexOf(provider);
+      idx = idx > 0 ? idx - 1 : availableProviders.length - 1;
+      // 给左按钮添加视觉反馈
+      const leftBtn = document.getElementById("modalNavLeft");
+      if (leftBtn) {
+        leftBtn.classList.add("keyboard-active");
+        setTimeout(() => leftBtn.classList.remove("keyboard-active"), 300);
+      }
+      window.showResponseDetail(availableProviders[idx], convId);
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      let idx = availableProviders.indexOf(provider);
+      idx = idx < availableProviders.length - 1 ? idx + 1 : 0;
+      // 给右按钮添加视觉反馈
+      const rightBtn = document.getElementById("modalNavRight");
+      if (rightBtn) {
+        rightBtn.classList.add("keyboard-active");
+        setTimeout(() => rightBtn.classList.remove("keyboard-active"), 300);
+      }
+      window.showResponseDetail(availableProviders[idx], convId);
+    } else if (e.key === "Escape") {
+      // Esc 关闭模态框
+      detailModal.classList.remove("active");
+    }
   });
 
   /**
@@ -1794,11 +1879,16 @@ document.addEventListener("DOMContentLoaded", async () => {
               clearInterval(interval);
               conv.archived = true;
               conv.summary.status = "ok"; // 确保状态是 ok，不是 generating
-              await saveConversationToStorage(convId);
+              await saveAllToStorage();
               // 最终全量渲染一次确保状态一致
               renderConversations();
               // 显式刷新按钮状态，确保总结按钮重新可点击（支持无限次重新总结）
               updateActionButtons();
+              // 总结完成后刷新悬浮直达按钮可见性
+              const floatBtn = document.getElementById("floatJumpSummary");
+              if (floatBtn && floatBtn._updateVisibility) {
+                floatBtn._updateVisibility();
+              }
               showNotification(t("summarize_complete"), "success");
             }
           }
@@ -2110,40 +2200,6 @@ Here are the responses from each AI model:
     selectionBadge.textContent = count;
   }
 
-  /**
-   * 加载主题
-   */
-  function loadTheme() {
-    chrome.storage.local.get(["theme"], (result) => {
-      currentTheme = result.theme || "dark";
-      applyTheme(currentTheme);
-    });
-  }
-
-  /**
-   * 应用主题
-   */
-  function applyTheme(theme) {
-    document.documentElement.setAttribute("data-theme", theme);
-    const sunIcon = document.querySelector(".theme-icon-sun");
-    const moonIcon = document.querySelector(".theme-icon-moon");
-    if (theme === "light") {
-      sunIcon.style.display = "block";
-      moonIcon.style.display = "none";
-    } else {
-      sunIcon.style.display = "none";
-      moonIcon.style.display = "block";
-    }
-  }
-
-  /**
-   * 切换主题
-   */
-  function toggleTheme() {
-    currentTheme = currentTheme === "dark" ? "light" : "dark";
-    chrome.storage.local.set({ theme: currentTheme });
-    applyTheme(currentTheme);
-  }
 
   /**
    * 加载语言
@@ -2376,8 +2432,7 @@ Here are the responses from each AI model:
     modelsModal.classList.remove("active");
   });
 
-  // 主题和语言
-  themeToggleBtn.addEventListener("click", toggleTheme);
+  // 语言
   langToggleBtn.addEventListener("click", toggleLanguage);
 
   // 清空历史
@@ -2394,18 +2449,29 @@ Here are the responses from each AI model:
 
   // 全部展开/折叠
   const toggleAllBtn = document.getElementById("toggleAllBtn");
-  let allExpanded = false;
   if (toggleAllBtn) {
+    // 初始化按钮标题
+    const hasExpandedConversations = conversations.some(c => !c.collapsed);
+    toggleAllBtn.title = hasExpandedConversations ? "全部折叠" : "全部展开";
+    
     toggleAllBtn.addEventListener("click", () => {
-      allExpanded = !allExpanded;
-      conversations.forEach((c) => (c.collapsed = !allExpanded));
+      // 检查当前是否有任何消息是展开的
+      const hasExpandedConversations = conversations.some(c => !c.collapsed);
+      
+      // 如果有展开的消息，则全部折叠；否则全部展开
+      const shouldExpandAll = !hasExpandedConversations;
+      
+      conversations.forEach((c) => {
+        c.collapsed = !shouldExpandAll;
+      });
+      
       renderConversations();
 
       // 更新按钮标题
-      toggleAllBtn.title = allExpanded ? "全部折叠" : "全部展开";
+      toggleAllBtn.title = shouldExpandAll ? "全部折叠" : "全部展开";
 
-      // 如果是全部折叠的，不滚动；如果是全部展开，滚到底部
-      if (allExpanded) {
+      // 如果是全部展开，滚到底部
+      if (shouldExpandAll) {
         setTimeout(() => {
           conversationStream.scrollTop = conversationStream.scrollHeight;
         }, 50);
@@ -2414,7 +2480,7 @@ Here are the responses from each AI model:
   }
 
   // 总结设置
-  const summarizeSettingsBtn = document.getElementById("summarizeSettingsBtn");
+  const summarizeSettingsInModelsBtn = document.getElementById("summarizeSettingsInModelsBtn");
   const summarizeSettingsModal = document.getElementById(
     "summarizeSettingsModal",
   );
@@ -2432,8 +2498,8 @@ Here are the responses from each AI model:
   const useDefaultPromptBtn = document.getElementById("useDefaultPromptBtn");
   const resetPromptBtn = document.getElementById("resetPromptBtn");
 
-  if (summarizeSettingsBtn) {
-    summarizeSettingsBtn.addEventListener("click", () => {
+  if (summarizeSettingsInModelsBtn) {
+    summarizeSettingsInModelsBtn.addEventListener("click", () => {
       summarizeModelSelect.value = summarizeModel;
       summarizePromptInput.value = customSummarizePrompt;
       summarizeSettingsModal.classList.add("active");

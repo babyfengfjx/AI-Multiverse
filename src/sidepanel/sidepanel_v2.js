@@ -863,14 +863,25 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     try {
       // 发送总结请求
-      await chrome.runtime.sendMessage({
+      const sendResult = await chrome.runtime.sendMessage({
         action: "summarize_responses",
         provider: summarizeModel,
         prompt: prompt,
       });
 
-      // 开始轮询总结结果
-      startPollingSummary(convId, summarizeModel);
+      if (sendResult && sendResult.status === "error") {
+        throw new Error(sendResult.error || "summarize_responses failed");
+      }
+
+      // 延迟启动轮询：
+      // fill_and_send 消息发出并返回后，AI 页面的编辑器状态更新、按钮激活、
+      // 请求发出均需一定时间（Gemini paste+Quill 约需 600ms，再加网络请求启动）。
+      // 等待 3000ms 后再开始轮询，确保此时检测到的是新回复而非上一次的旧内容。
+      const pollStartDelay = 3000;
+      console.log(
+        `[Summarize] fill_and_send OK, starting poll in ${pollStartDelay}ms for provider: ${summarizeModel}`,
+      );
+      startPollingSummary(convId, summarizeModel, pollStartDelay);
     } catch (e) {
       console.error("[Summarize] Error:", e);
       conv.summary = null;
@@ -881,43 +892,83 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   /**
    * 轮询总结结果
+   *
+   * @param {number} convId        - 对话 ID
+   * @param {string} provider      - 总结模型（如 "gemini"）
+   * @param {number} [startDelay]  - 首次轮询前的额外等待时间（ms），
+   *                                 用于等待 fill_and_send 完成内部状态更新后
+   *                                 再开始检测新回复，避免过早拿到旧内容
    */
-  function startPollingSummary(convId, provider) {
-    const interval = setInterval(async () => {
-      const conv = conversations.find((c) => c.id === convId);
-      if (!conv || !conv.summary) {
-        clearInterval(interval);
-        return;
-      }
+  function startPollingSummary(convId, provider, startDelay = 0) {
+    // 超时保护：最多等待 120 秒，防止无限轮询
+    const MAX_POLL_MS = 120_000;
+    const pollStart = Date.now();
 
-      try {
-        const result = await chrome.runtime.sendMessage({
-          action: "fetch_all_responses",
-          providers: [provider],
-        });
-
-        if (result && result.status === "ok" && result.responses) {
-          const response = result.responses[provider];
-          if (response && response.status === "ok" && response.text) {
-            conv.summary = {
-              model: provider,
-              text: response.text,
-              html: response.html || "",
-              status: "ok",
-              timestamp: Date.now(),
-            };
-
-            // 总结完成，存档
-            await archiveConversation(convId);
-            clearInterval(interval);
-            renderConversations();
-            showNotification(t("summarize_complete"), "success");
-          }
+    // 延迟启动：先等待 startDelay ms，再开启 interval
+    const beginPolling = () => {
+      const interval = setInterval(async () => {
+        const conv = conversations.find((c) => c.id === convId);
+        if (!conv || !conv.summary) {
+          clearInterval(interval);
+          return;
         }
-      } catch (e) {
-        console.error("[Poll Summary] Error:", e);
-      }
-    }, POLLING_INTERVAL);
+
+        // 超时检测
+        if (Date.now() - pollStart > MAX_POLL_MS) {
+          console.warn("[Poll Summary] Timeout waiting for summary response");
+          clearInterval(interval);
+          conv.summary = null;
+          renderConversations();
+          showNotification(t("summarize_error"), "error");
+          return;
+        }
+
+        try {
+          const result = await chrome.runtime.sendMessage({
+            action: "fetch_all_responses",
+            providers: [provider],
+          });
+
+          if (result && result.status === "ok" && result.responses) {
+            const response = result.responses[provider];
+            if (response && response.status === "ok" && response.text) {
+              conv.summary = {
+                model: provider,
+                text: response.text,
+                html: response.html || "",
+                status: "ok",
+                timestamp: Date.now(),
+              };
+
+              // 总结完成，存档
+              await archiveConversation(convId);
+              clearInterval(interval);
+              renderConversations();
+              showNotification(t("summarize_complete"), "success");
+            } else if (response && response.status === "error") {
+              // 模型返回了明确的错误状态，终止轮询
+              console.warn(
+                "[Poll Summary] Provider returned error:",
+                response.error,
+              );
+              clearInterval(interval);
+              conv.summary = null;
+              renderConversations();
+              showNotification(t("summarize_error"), "error");
+            }
+            // status === "generating" / "loading" → 继续等待，不做任何操作
+          }
+        } catch (e) {
+          console.error("[Poll Summary] Error:", e);
+        }
+      }, POLLING_INTERVAL);
+    };
+
+    if (startDelay > 0) {
+      setTimeout(beginPolling, startDelay);
+    } else {
+      beginPolling();
+    }
   }
 
   /**

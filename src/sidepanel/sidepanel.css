@@ -2773,6 +2773,26 @@ body {
     margin-bottom: 0 !important;
 }
 
+/* ── 隐藏 marked.js 在内容开头生成的空段落/空行 ─────────────────────────
+ * marked.js 在解析带前缀空行的文本时，会在开头生成 <p></p> 或 <br> 标签，
+ * 导致内容框顶部出现大片空白。以下规则隐藏这些空白前缀元素。
+ * ─────────────────────────────────────────────────────────────────────── */
+.markdown-content > p:empty,
+.markdown-content > br:first-child,
+.response-card-body .markdown-content > p:empty,
+.response-card-body .markdown-content > br:first-child,
+.detail-body .markdown-content > p:empty,
+.detail-body .markdown-content > br:first-child,
+.summary-body .markdown-content > p:empty,
+.summary-body .markdown-content > br:first-child,
+.summary-content .markdown-content > p:empty,
+.summary-content .markdown-content > br:first-child {
+    display: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: 0 !important;
+}
+
 /* Headings */
 .markdown-content h1,
 .markdown-content h2,
@@ -3034,6 +3054,54 @@ body {
     overflow-y: auto;
 }
 
+/* ── 修复 ol 有序列表编号被错误覆盖的问题 ────────────────────────────────
+ * 问题根因：`.response-card-body:not(.markdown-content) ol` 选择器的语义是
+ * "当 response-card-body 本身没有 markdown-content class 时，匹配其内所有 ol"。
+ * 由于 response-card-body 永远不会直接拥有 markdown-content class
+ *（该 class 在其子 div 上），该规则会错误地将 list-style-type:none 应用于
+ * markdown-content 内的 ol，导致列表项显示为负数或空白。
+ * 以下规则通过更高特异性明确恢复嵌套 markdown-content 内 ol 的正确样式。
+ * ─────────────────────────────────────────────────────────────────────── */
+.response-card-body .markdown-content ol,
+.detail-body .markdown-content ol {
+    list-style-type: decimal !important;
+    padding-left: 1.6em !important;
+    margin: 0.4em 0 0.75em 0 !important;
+}
+
+.response-card-body .markdown-content ol li,
+.detail-body .markdown-content ol li {
+    list-style: decimal !important;
+    list-style-type: decimal !important;
+    padding-left: 0 !important;
+    margin: 0.2em 0 !important;
+}
+
+.response-card-body .markdown-content ol li::marker,
+.detail-body .markdown-content ol li::marker {
+    display: revert !important;
+    content: revert !important;
+    visibility: visible !important;
+    color: var(--accent);
+    font-weight: 600;
+}
+
+/* 同理修复 ul 列表在嵌套 markdown-content 内的样式 */
+.response-card-body .markdown-content ul,
+.detail-body .markdown-content ul {
+    list-style-type: disc !important;
+    padding-left: 1.6em !important;
+    margin: 0.4em 0 0.75em 0 !important;
+}
+
+.response-card-body .markdown-content ul li::marker,
+.detail-body .markdown-content ul li::marker {
+    display: revert !important;
+    content: revert !important;
+    visibility: visible !important;
+    color: var(--accent);
+}
+
 /* Detail modal markdown content */
 .detail-body.markdown-content {
     font-size: 15px;
@@ -3234,11 +3302,11 @@ body.modal-resizing * {
 }
 
 .modal-nav-left {
-    left: 20px;
+    left: 28px;
 }
 
 .modal-nav-right {
-    right: 20px;
+    right: 28px;
 }
 
 /* Hide arrows when only one response */
@@ -3678,7 +3746,8 @@ body.modal-resizing * {
     border-radius: 50%;
     background: var(--primary-color);
     color: white;
-    display: flex;
+    /* 默认隐藏，仅在满足条件时由 JS 控制显示 */
+    display: none;
     align-items: center;
     justify-content: center;
     cursor: pointer;
@@ -3689,6 +3758,7 @@ body.modal-resizing * {
     border: 2px solid rgba(255, 255, 255, 0.2);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
+    opacity: 0;
 }
 
 .float-jump-btn:hover {
@@ -4647,4 +4717,37 @@ body.modal-resizing * {
     50% {
         opacity: 0;
     }
+}
+
+/* Modal footer styles */
+.modal-footer {
+    display: flex;
+    gap: 12px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.modal-footer .secondary-btn {
+    flex: 1;
+    padding: 10px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.modal-footer .secondary-btn:hover {
+    background: var(--accent-gradient);
+    color: white;
+    border-color: transparent;
+    transform: translateY(-1px);
+}
+
+.modal-footer .primary-btn-blue {
+    flex: 1;
+    padding: 10px 16px;
 }

@@ -67,6 +67,41 @@ function removeThinkingBlocks(element, provider = "") {
   // Clone to avoid modifying the original DOM
   const cloned = element.cloneNode(true);
 
+  // ── Gemini：移除回复顶部的 AI 名称标签元素 ──────────────────────────────
+  // Gemini 的 model-response 容器内顶部有一个显示 "Gemini" 字样的标签元素，
+  // 使用宽泛选择器时会被一同提取，需在 DOM 层提前移除。
+  if (provider === "gemini") {
+    // 移除仅含 AI 名称文本的短小标签节点（profile pill / author label）
+    const shortTextSelectors = [
+      ".model-response-profile-pill",
+      ".response-author",
+      ".message-author",
+      '[class*="profile-pill"]',
+      '[class*="author-name"]',
+      '[class*="response-label"]',
+      '[class*="model-label"]',
+      '[class*="bot-name"]',
+    ];
+    shortTextSelectors.forEach((sel) => {
+      try {
+        cloned.querySelectorAll(sel).forEach((el) => el.remove());
+      } catch (e) {}
+    });
+
+    // 再做一次文本扫描：移除 innerText 仅为 "Gemini" 或类似 AI 名称的任何元素
+    try {
+      cloned.querySelectorAll("span, div, p").forEach((el) => {
+        const txt = (el.innerText || el.textContent || "").trim();
+        if (
+          /^(Gemini|Google\s*Gemini|Gemini\s*说|Gemini\s*says)$/i.test(txt) &&
+          el.children.length === 0
+        ) {
+          el.remove();
+        }
+      });
+    } catch (e) {}
+  }
+
   // For Kimi: remove UI chrome injected around tables and code blocks
   // Kimi renders a "表格" label + "复制" copy button above each table/code block.
   // These are purely decorative UI elements and pollute the extracted text/html.
@@ -93,23 +128,55 @@ function removeThinkingBlocks(element, provider = "") {
   //   ├── .hyc-component-deepsearch-cot__think (thinking - REMOVE)
   //   └── .hyc-content-md (answer - KEEP)
   if (provider === "yuanbao") {
+    // ── 方式1：按已知结构精确移除思考子节点 ────────────────────────────────
     const deepSearchComponents = cloned.querySelectorAll(
       ".hyc-component-deepsearch-cot",
     );
-    console.log(
-      `[AI Multiverse] Found ${deepSearchComponents.length} deep search components in Yuanbao response`,
-    );
-
     deepSearchComponents.forEach((component) => {
-      // Remove only the thinking child, keep the answer content
       const thinkingSections = component.querySelectorAll(
         ".hyc-component-deepsearch-cot__think",
       );
-      console.log(
-        `[AI Multiverse] Removing ${thinkingSections.length} thinking sections from component`,
-      );
       thinkingSections.forEach((el) => el.remove());
     });
+
+    // ── 方式2：移除更广泛的深度思考容器（应对 Yuanbao DOM 更新）────────────
+    const broadThinkingSelectors = [
+      // 已知结构的变体
+      '[class*="deepsearch-cot__think"]',
+      '[class*="deep-think"]',
+      '[class*="deepthink"]',
+      '[class*="think-process"]',
+      '[class*="thinking-process"]',
+      '[class*="think-content"]',
+      // collapsible 类型的思考块
+      "details",
+      '[class*="reasoning-block"]',
+      '[class*="thought-block"]',
+    ];
+    broadThinkingSelectors.forEach((sel) => {
+      try {
+        cloned.querySelectorAll(sel).forEach((el) => {
+          // 仅移除包含"深度思考"/"思考"等关键词的元素，避免误删正文
+          const txt = (el.innerText || el.textContent || "").substring(0, 60);
+          if (/深度思考|思考过程|思考中|reasoning|thinking/i.test(txt)) {
+            el.remove();
+          }
+        });
+      } catch (e) {}
+    });
+
+    // ── 方式3：移除"深度思考"标题行本身（纯标签，无实质内容）───────────────
+    try {
+      cloned.querySelectorAll("span, div, p, h1, h2, h3, h4").forEach((el) => {
+        const txt = (el.innerText || el.textContent || "").trim();
+        if (
+          /^(深度思考|深度搜索|思考过程)[：:。\s]*$/.test(txt) &&
+          el.children.length === 0
+        ) {
+          el.remove();
+        }
+      });
+    } catch (e) {}
 
     return cloned;
   }
@@ -270,6 +337,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   if (request.action === "extract_response") {
+    // Yuanbao: 优先通过 /detail API 提取，API 返回结构化 JSON，
+    // 可精确区分 type:"think"（深度思考）和 type:"text"（正文），避免 DOM 刮取遗漏。
+    if (request.provider === "yuanbao") {
+      extractYuanbaoViaAPI()
+        .then((apiResult) => {
+          if (apiResult && apiResult.status === "ok" && apiResult.text) {
+            sendResponse(apiResult);
+          } else {
+            // API 失败时降级到 DOM 方式
+            const result = extractLatestResponse(request.provider);
+            sendResponse(result);
+          }
+        })
+        .catch(() => {
+          const result = extractLatestResponse(request.provider);
+          sendResponse(result);
+        });
+      return true; // 异步响应
+    }
     const result = extractLatestResponse(request.provider);
     sendResponse(result);
     return;
@@ -311,6 +397,197 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // === Extract Latest AI Response ===
+/**
+ * 通过元宝 /detail API 提取最新 AI 回复，精确过滤深度思考内容。
+ *
+ * API 返回的 speechesV2[].content[] 中：
+ *   { type: "think", content: "..." }      → 深度思考过程，需跳过
+ *   { type: "deepSearch", contents: [...] } → 深度搜索过程，需跳过
+ *   { type: "searchGuid", docs: [...] }     → 引用来源列表，需跳过
+ *   { type: "text",  msg: "..." }           → 正文回答，保留
+ *
+ * conversationId 从当前页面 URL 中提取（路径最后一段或 ?conversation= 参数）。
+ * agentId 从 URL 路径中提取（yuanbao.tencent.com/chat/<agentId>/<convId>）。
+ */
+async function extractYuanbaoViaAPI() {
+  try {
+    // ── 1. 从 URL 中提取 conversationId 和 agentId ─────────────────────────
+    const url = window.location.href;
+    const urlObj = new URL(url);
+
+    console.log(
+      "[AI Multiverse] Yuanbao API: 开始提取，当前 URL:",
+      urlObj.pathname + urlObj.search,
+    );
+
+    // 尝试从查询参数获取 conversationId
+    let conversationId =
+      urlObj.searchParams.get("conversation") ||
+      urlObj.searchParams.get("conversationId");
+
+    // 尝试从路径中提取（格式：/chat/<agentId>/<conversationId>）
+    const pathParts = urlObj.pathname.replace(/^\/+|\/+$/g, "").split("/");
+    // pathParts 可能是 ["chat", "naQivTmsDa"] 或 ["chat", "naQivTmsDa", "<uuid>"]
+    let agentId = null;
+    if (pathParts[0] === "chat") {
+      agentId = pathParts[1] || null;
+      if (!conversationId && pathParts[2]) {
+        conversationId = pathParts[2];
+      }
+    }
+
+    // 若 conversationId 不在路径里，尝试从 DOM / localStorage 取
+    if (!conversationId) {
+      // 元宝有时把 conversationId 存在 URL hash
+      const hash = urlObj.hash.replace(/^#/, "");
+      if (hash && /^[0-9a-f-]{36}$/i.test(hash)) {
+        conversationId = hash;
+      }
+    }
+
+    if (!conversationId) {
+      console.warn(
+        "[AI Multiverse] Yuanbao API: 无法从 URL 提取 conversationId（需要 UUID 格式），降级到 DOM 方式",
+      );
+      return null;
+    }
+
+    console.log(
+      "[AI Multiverse] Yuanbao API: 提取到 conversationId:",
+      conversationId.substring(0, 8) + "...",
+      agentId ? "agentId: " + agentId.substring(0, 8) + "..." : "无 agentId",
+    );
+
+    // ── 2. 请求 /detail API ──────────────────────────────────────────────────
+    const apiUrl = new URL(
+      "https://yuanbao.tencent.com/api/user/agent/conversation/v1/detail",
+    );
+
+    console.log(
+      "[AI Multiverse] Yuanbao API: 正在请求 /detail API...",
+      apiUrl.toString(),
+    );
+
+    const resp = await fetch(apiUrl.toString(), {
+      method: "POST",
+      credentials: "include", // 携带登录 Cookie
+      headers: { 
+        "Content-Type": "application/json",
+        Accept: "application/json" 
+      },
+      body: JSON.stringify({
+        conversationId: conversationId,
+        ...(agentId && { agentId: agentId })
+      })
+    });
+
+    if (!resp.ok) {
+      console.warn(
+        "[AI Multiverse] Yuanbao API: HTTP 错误",
+        resp.status,
+        resp.statusText,
+      );
+      return null;
+    }
+
+    const data = await resp.json();
+
+    // ── 3. 找到最新一条 AI 回复 ──────────────────────────────────────────────
+    if (!data || !Array.isArray(data.convs)) {
+      console.warn(
+        "[AI Multiverse] Yuanbao API: 响应数据结构异常，无 convs 字段",
+      );
+      return null;
+    }
+
+    const convs = data.convs;
+    if (convs.length === 0) {
+      console.warn("[AI Multiverse] Yuanbao API: 对话列表为空");
+      return null;
+    }
+
+    // convs 列表按 index 降序排列（最新在前），找第一条 speaker === "ai" 的
+    const latestAI = convs.find(
+      (c) =>
+        c.speaker === "ai" &&
+        Array.isArray(c.speechesV2) &&
+        c.speechesV2.length > 0,
+    );
+    if (!latestAI) {
+      console.warn(
+        "[AI Multiverse] Yuanbao API: 未找到有效的 AI 回复（speaker === 'ai'）",
+      );
+      return null;
+    }
+
+    console.log(
+      "[AI Multiverse] Yuanbao API: 找到最新 AI 回复，speechesV2 数量:",
+      latestAI.speechesV2.length,
+    );
+
+    // ── 4. 从 speechesV2 中拼接所有 type:"text" 内容，跳过 type:"think" ──────
+    const textParts = [];
+    let skippedTypes = new Set();
+
+    for (const speech of latestAI.speechesV2) {
+      if (!Array.isArray(speech.content)) continue;
+      for (const item of speech.content) {
+        // 记录跳过的内容类型（用于调试）
+        if (
+          !["text", "think", "deepSearch", "searchGuid", "deepSearch"].includes(
+            item.type,
+          )
+        ) {
+          console.log("[AI Multiverse] Yuanbao API: 未知内容类型:", item.type);
+        }
+
+        if (item.type === "text" && item.msg) {
+          // msg 中 \u003c/\u003e 是 HTML 实体，保留原始 Markdown
+          textParts.push(item.msg);
+        } else if (item.type) {
+          skippedTypes.add(item.type);
+        }
+        // type === "think" → 深度思考过程，跳过
+        // type === "deepSearch" → 深度搜索过程，跳过
+        // type === "searchGuid" → 引用来源列表，跳过
+      }
+    }
+
+    console.log(
+      "[AI Multiverse] Yuanbao API: 过滤掉的内容类型:",
+      Array.from(skippedTypes).join(", ") || "无",
+    );
+
+    const combined = textParts.join("\n\n").trim();
+    if (!combined) {
+      console.debug(
+        "[AI Multiverse] Yuanbao API: 提取后无有效文本内容（可能全部是思考/搜索内容）",
+      );
+      return null;
+    }
+
+    console.log(
+      "[AI Multiverse] Yuanbao API: ✓ 成功提取回复，字数:",
+      combined.length,
+    );
+    return { status: "ok", text: combined, html: "" };
+  } catch (err) {
+    console.warn(
+      "[AI Multiverse] Yuanbao API 提取失败:",
+      err.name || "Error",
+      err.message,
+    );
+    // 打印详细错误堆栈（开发环境）
+    if (
+      window.location.hostname === "localhost" ||
+      urlObj.searchParams.has("debug")
+    ) {
+      console.error(err);
+    }
+    return null;
+  }
+}
+
 function extractLatestResponse(provider) {
   let config = null;
 
@@ -378,6 +655,39 @@ function extractLatestResponse(provider) {
         }
         break; // 若最新容器有内容，退出提前检测，走正常流程
       } catch (e) {}
+    }
+  }
+
+  // ===================================================================
+  // Kimi 特殊处理（Bug Fix）：
+  // Kimi 在"搜索"阶段时，新的 segment-assistant 容器已创建但 segment-content-box
+  // 内容为空（或仅含加载指示器）。旧容器内的 .markdown 子元素没有被标记为
+  // data-multiverse-old（标记在外层 div.segment.segment-assistant 上），
+  // 导致 fallback 选择器捡到旧答案并误判为"已完成"。
+  // 解决方案：提前检测"最新容器存在且内容为空 + 正在生成"的情况，直接返回 GENERATING。
+  // ===================================================================
+  if (provider === "kimi") {
+    const latestSegments = Array.from(
+      document.querySelectorAll("div.segment.segment-assistant"),
+    ).filter((el) => !el.getAttribute("data-multiverse-old"));
+    if (latestSegments.length > 0) {
+      const latestSegment = latestSegments[latestSegments.length - 1];
+      const contentBox = latestSegment.querySelector(
+        ".segment-content-box, .markdown-container .markdown, .markdown",
+      );
+      const contentText = contentBox
+        ? (contentBox.innerText || contentBox.textContent || "").trim()
+        : (latestSegment.innerText || latestSegment.textContent || "").trim();
+      if (contentText.length === 0) {
+        const networkStatus = _networkStreamingStatus["kimi"];
+        const timeSinceSend = Date.now() - (_lastSendTimes["kimi"] || 0);
+        if (networkStatus?.isStreaming || timeSinceSend < 30000) {
+          console.log(
+            "[AI Multiverse] Kimi: New segment content is empty, search/generation in progress...",
+          );
+          return { status: AI_STATUS.GENERATING, text: "", html: "" };
+        }
+      }
     }
   }
 
@@ -541,6 +851,20 @@ function extractLatestResponse(provider) {
 
   // Fallback: try common containers
   if (!bestEl) {
+    // ===================================================================
+    // Bug Fix（Kimi / 通用）：
+    // 若所有主选择器均未命中（新 segment 尚未建立，正处于搜索阶段），
+    // 且距离发送时间 < 30s，则直接返回 GENERATING，
+    // 避免下方 fallback 选择器捡到旧 segment 内部的 .markdown 子元素。
+    // ===================================================================
+    const _timeSinceSendFallback = Date.now() - (_lastSendTimes[provider] || 0);
+    if (provider === "kimi" && _timeSinceSendFallback < 30000) {
+      console.log(
+        "[AI Multiverse] Kimi: no new segment found yet, returning GENERATING to avoid stale fallback",
+      );
+      return { status: AI_STATUS.GENERATING, text: "", html: "" };
+    }
+
     const fallbackSelectors = [
       ".markdown-body:not([data-multiverse-old])",
       '[class*="markdown"]:not([data-multiverse-old])',
@@ -549,7 +873,14 @@ function extractLatestResponse(provider) {
     ];
     for (const sel of fallbackSelectors) {
       try {
-        const elements = document.querySelectorAll(sel);
+        const elements = Array.from(document.querySelectorAll(sel)).filter(
+          // ── 祖先过滤 ──────────────────────────────────────────────────
+          // CSS :not([data-multiverse-old]) 只检查元素自身，不检查祖先。
+          // 旧容器（如 div.segment.segment-assistant）的子元素（如 .markdown）
+          // 自身没有该标记，会被选中，导致展示旧内容。
+          // 此处追加 JS 层过滤：排除任何祖先带有 data-multiverse-old 的元素。
+          (el) => !el.closest("[data-multiverse-old]"),
+        );
         if (elements.length > 0) {
           bestEl = elements[elements.length - 1];
           break;
@@ -563,7 +894,38 @@ function extractLatestResponse(provider) {
   // 但 Gemini Angular 框架在更新时复用了同一个元素而非创建新元素），
   // 忽略 data-multiverse-old 标记，直接取最后一个有实际内容的 model-response。
   // 这是绝对最后的兜底，只在确实找不到任何元素时才触发。
+  //
+  // ⚠️ 关键约束：以下两种情况下绝不启用此兜底：
+  //   1. 网络层仍在流式传输（streaming_started 已收到但 streaming_completed 未收到）
+  //   2. 发送后 90 秒内（给智能总结等长文本回复足够的生成时间）
+  //
+  // 原因：新问题发送后，旧的 model-response 元素已被标为 data-multiverse-old，
+  // 新元素尚未出现（或为空）。若此时忽略 data-multiverse-old 直接取旧元素，
+  // 会把上一次的答案误判为正在生成的内容，导致面板展示旧回答。
+  // 智能总结场景：Gemini 需处理大量文本，生成时间可能超过 30-60s，
+  // 因此将时间窗口从 15s 延长到 90s，并优先依赖网络流式状态判断。
   if (!bestEl && provider === "gemini") {
+    const _geminiTimeSinceSend = Date.now() - (_lastSendTimes["gemini"] || 0);
+    const _geminiNetworkStatus = _networkStreamingStatus["gemini"];
+    // 条件1：网络层正在流式传输 → 必然在生成中，直接抑制
+    const _geminiIsStreaming = _geminiNetworkStatus?.isStreaming === true;
+    // 条件2：流式传输刚完成（completedAt 在 3s 内）→ DOM 可能还未更新，继续抑制
+    const _geminiJustCompleted =
+      _geminiNetworkStatus?.isStreaming === false &&
+      _geminiNetworkStatus?.endTime &&
+      Date.now() - _geminiNetworkStatus.endTime < 3000;
+    // 条件3：时间窗口内（90s），兜底处于无信号的盲区，保守抑制
+    const _geminiInTimeWindow = _geminiTimeSinceSend < 90000;
+
+    if (_geminiIsStreaming || _geminiJustCompleted || _geminiInTimeWindow) {
+      // 新问题刚发出 / 正在生成中，绝不显示旧内容，直接返回空白生成状态
+      console.log(
+        `[AI Multiverse] Gemini: suppressing last-resort fallback` +
+          ` (streaming=${_geminiIsStreaming}, justCompleted=${_geminiJustCompleted},` +
+          ` timeSinceSend=${_geminiTimeSinceSend}ms)`,
+      );
+      return { status: AI_STATUS.GENERATING, text: "", html: "" };
+    }
     try {
       const allModelResponses = Array.from(
         document.querySelectorAll(
@@ -604,8 +966,24 @@ function extractLatestResponse(provider) {
       return { status: AI_STATUS.GENERATING, text: "", html: "" };
     }
 
-    if (timeSinceSend < 30000) {
-      console.warn(`[AI Multiverse] Still waiting for ${provider} response...`);
+    // Special handling for ChatGPT - extend timeout and reduce warning frequency
+    const timeoutThreshold = provider === "chatgpt" ? 60000 : 30000; // 60s for ChatGPT, 30s for others
+    
+    // Check network streaming status for ChatGPT
+    const networkStatus = _networkStreamingStatus[provider];
+    const isStreaming = networkStatus?.isStreaming === true;
+    
+    if (timeSinceSend < timeoutThreshold || isStreaming) {
+      // Only show warning every 15 seconds for ChatGPT, every 10 seconds for others
+      const warningInterval = provider === "chatgpt" ? 15000 : 10000;
+      const shouldShowWarning = Math.floor(timeSinceSend / warningInterval) > Math.floor((timeSinceSend - 1000) / warningInterval);
+      
+      // Suppress warning if network is actively streaming
+      if (shouldShowWarning && !isStreaming) {
+        console.warn(`[AI Multiverse] Still waiting for ${provider} response... (${Math.floor(timeSinceSend / 1000)}s)`);
+      } else if (isStreaming) {
+        console.log(`[AI Multiverse] ${provider} is actively streaming (${Math.floor(timeSinceSend / 1000)}s)`);
+      }
       return { status: AI_STATUS.GENERATING, text: "", html: "" };
     }
 
@@ -631,9 +1009,37 @@ function extractLatestResponse(provider) {
   let trimmed = text.trim();
 
   // Additional text-based filtering for embedded thinking content
-  // Skip aggressive text filtering for Yuanbao to preserve content
-  if (provider !== "yuanbao") {
-    trimmed = filterThinkingText(trimmed);
+  trimmed = filterThinkingText(trimmed);
+
+  // ── Yuanbao 深度思考内容过滤 ────────────────────────────────────────────
+  // removeThinkingBlocks 已在 DOM 层移除 .hyc-component-deepsearch-cot__think，
+  // 但 Yuanbao 可能更新了结构，在此用文本兜底：移除"深度思考"块直到正文开始。
+  if (provider === "yuanbao") {
+    // 方式1：移除以"深度思考"/"已深度思考"开头的整个段落块（直到空行或下一大段）
+    trimmed = trimmed.replace(/^已?深度思考[\s\S]*?(?=\n{2,}|$)/, "").trim();
+    // 方式2：移除行首为"深度思考"的单行标签（含括号内容，如"已深度思考(用时3秒)"）
+    trimmed = trimmed.replace(/^已?深度思考[（(][^）)]*[）)]?\s*/m, "").trim();
+    trimmed = trimmed.replace(/^已?深度思考[：:：]?\s*/m, "").trim();
+    // 方式3：移除连续的"思考中..."/"正在思考"等状态文本
+    trimmed = trimmed
+      .replace(/^(思考中|正在思考|深度思考中)[.…。]*\s*/m, "")
+      .trim();
+    // 方式4：移除"已完成深度搜索(用时N秒)"标题行
+    trimmed = trimmed
+      .replace(/^已完成深度搜索[（(][^）)]*[）)]\s*/m, "")
+      .trim();
+  }
+
+  // ── Gemini "Gemini说" / "Gemini says" 前缀清理 ──────────────────────────
+  // 当 model-response 的宽泛选择器生效时，可能把页面顶部的 AI 名称标签
+  // 一同提取进来，形如 "Gemini说\n实际回答内容"。
+  if (provider === "gemini") {
+    // 移除行首的 "Gemini说"、"Gemini 说"、"Gemini says"、"Gemini:" 等变体
+    trimmed = trimmed
+      .replace(/^Gemini\s*(?:说|说：|说:|says|says:|：|:)\s*/i, "")
+      .trim();
+    // 移除单独成行的 "Gemini"（名称行后紧跟实际内容）
+    trimmed = trimmed.replace(/^Gemini\s*\n+/i, "").trim();
   }
 
   // Clean up excessive blank lines (3+ consecutive newlines -> 2)
@@ -697,12 +1103,52 @@ function extractLatestResponse(provider) {
     '[title*="Copy"]',
     '[title*="\u590d\u5236"]',
     '[title*="\u4e0b\u8f7d"]',
+    // ── DeepSeek 搜索引用角标（-1、-5、-9 之类的上标引用编号）────────────
+    // DeepSeek 搜索模式在正文中插入超链接引用角标，提取到卡片后无法跳转，
+    // 且其内部文本格式为 "-数字"，拼接后形成 "-1-5-9" 噪音，统一移除。
+    '[class*="ds-footnote"]',
+    '[class*="footnote-ref"]',
+    '[class*="citation-tag"]',
+    '[class*="citation-link"]',
+    '[class*="citation-marker"]',
+    '[class*="search-citation"]',
+    '[class*="reference-tag"]',
+    // ── Yuanbao 深度搜索引用来源区域（含网站图标/logo 图片）──────────────
+    // 深度搜索完成后会在底部插入参考资料列表，其中包含来源网站的 favicon/图标，
+    // 这些图标不属于回答正文，需要整块移除。
+    '[class*="deepsearch-sources"]',
+    '[class*="deepSearch-sources"]',
+    '[class*="source-list"]',
+    '[class*="sourceList"]',
+    '[class*="reference-list"]',
+    '[class*="referenceList"]',
+    '[class*="cite-list"]',
+    '[class*="citeList"]',
+    '[class*="search-source"]',
+    '[class*="searchSource"]',
+    '[class*="web-search-result"]',
   ];
   unwantedSelectors.forEach((selector) => {
     try {
       clonedEl.querySelectorAll(selector).forEach((el) => el.remove());
     } catch (e) {}
   });
+
+  // ── DeepSeek 引用角标兜底清理 ─────────────────────────────────────────────
+  // 上方选择器依赖 class 名，若 DeepSeek 混淆了类名则会漏掉。
+  // 兜底：遍历所有 <sup> 子元素，若其文本内容匹配 "-数字" 格式（DeepSeek 引用
+  // 角标的内部格式），则直接移除该元素。
+  if (provider === "deepseek") {
+    try {
+      clonedEl.querySelectorAll("sup").forEach((sup) => {
+        const t = (sup.innerText || sup.textContent || "").trim();
+        // 匹配 "-1"、"-15"、"-1-5-9" 等纯负数/多段负数格式
+        if (/^(-\d+)+$/.test(t)) {
+          sup.remove();
+        }
+      });
+    } catch (e) {}
+  }
 
   // 移除纯图标 SVG（复制/操作按钮）
   try {
@@ -716,6 +1162,24 @@ function extractLatestResponse(provider) {
       }
     });
   } catch (e) {}
+
+  // ── Yuanbao 专项：移除引用来源图片/图标（favicon 等）────────────────────
+  // 元宝深度搜索的引用来源列表中包含来源网站的图标图片，
+  // 这些图片不属于回答正文内容，统一移除。
+  if (provider === "yuanbao") {
+    try {
+      // 移除所有 img 标签（来源图标、logo 等）
+      clonedEl.querySelectorAll("img").forEach((img) => img.remove());
+      // 移除包含链接 URL 的小图标容器（通常是 <a> 内的纯图标）
+      clonedEl.querySelectorAll("a").forEach((a) => {
+        const text = (a.innerText || a.textContent || "").trim();
+        // 如果链接内几乎没有文字，只有图片/图标，则移除整个链接容器
+        if (text.length < 5 && !a.querySelector("p, span, div")) {
+          a.remove();
+        }
+      });
+    } catch (e) {}
+  }
 
   // ── 第三步：DOM 级别移除开头的空块元素（Gemini 等平台常见） ──────────────
   // 比正则更可靠：真正遍历 DOM 节点，移除开头所有内容为空的块级元素
@@ -761,6 +1225,55 @@ function extractLatestResponse(provider) {
       break; // 遇到有内容的元素，停止
     }
   } catch (e) {}
+
+  // ── Gemini "Gemini说" / "Gemini says" 前缀清理（HTML 层） ──────────────────
+  // trimmed（文本）已在上方移除前缀，此处同步清理 clonedEl 的 DOM，
+  // 确保 html 字段也不含 "Gemini说" 前缀，避免在卡片及详情弹窗中仍然显示。
+  if (provider === "gemini") {
+    try {
+      // 遍历 clonedEl 开头的文本节点/元素节点，找到包含 "Gemini说" 前缀的节点并清除
+      const geminiPrefixRe = /^Gemini\s*(?:说|说：|说:|says|says:|：|:)\s*/i;
+      const geminiNameRe = /^Gemini\s*$/i;
+
+      // 1. 处理直接的文本节点
+      for (const node of Array.from(clonedEl.childNodes)) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          const cleaned = node.textContent
+            .replace(geminiPrefixRe, "")
+            .replace(geminiNameRe, "");
+          if (cleaned !== node.textContent) {
+            node.textContent = cleaned;
+          }
+          if (node.textContent.trim()) break; // 遇到有内容节点停止
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+          const txt = (node.innerText || node.textContent || "").trim();
+          // 若整个元素只包含 "Gemini说" 之类的前缀文字，直接移除该元素
+          if (geminiPrefixRe.test(txt) || geminiNameRe.test(txt)) {
+            // 确认该元素不含任何实质内容（移除前缀后为空）
+            const afterClean = txt
+              .replace(geminiPrefixRe, "")
+              .replace(geminiNameRe, "")
+              .trim();
+            if (afterClean.length === 0) {
+              node.remove();
+              continue;
+            }
+          }
+          // 尝试清理元素内的第一个文本节点
+          const firstText = node.firstChild;
+          if (firstText && firstText.nodeType === Node.TEXT_NODE) {
+            const cleaned = firstText.textContent
+              .replace(geminiPrefixRe, "")
+              .replace(geminiNameRe, "");
+            if (cleaned !== firstText.textContent) {
+              firstText.textContent = cleaned;
+            }
+          }
+          if ((node.innerText || node.textContent || "").trim()) break;
+        }
+      }
+    } catch (e) {}
+  }
 
   let html = clonedEl.innerHTML || "";
 
@@ -857,9 +1370,14 @@ function getGenerationStatus(provider, lastEl) {
   if (networkStatus) {
     if (networkStatus.isStreaming) {
       // ─── Kimi / gRPC-HTTP2 安全阀 ───────────────────────────────────────
-      // gRPC over HTTP/2 的 onCompleted 有时不会触发（持久连接复用），
-      // 导致 isStreaming 永远为 true。
-      // 当内容已经连续稳定 6 个周期（约 4.8s）时，强制判定为完成。
+      // Kimi 使用 gRPC over HTTP/2，一次请求包含"搜索阶段"和"回答阶段"，
+      // 搜索完成后有较长空档期（DOM 稳定但回答尚未开始），原来 6 周期
+      // （约 4.8s）的阈值会在这个空档期误判为完成，导致实际回答被丢弃。
+      //
+      // 修复策略：
+      //   - isStreaming=true 时：阈值提高到 60 周期（约 48s），覆盖 Kimi
+      //     搜索→回答之间最长的空档期；同时设置最大超时兜底（180s）
+      //   - 非 Kimi 平台维持原来 6 周期，不影响其他模型
       if (currentText.length > 0) {
         if (currentText !== _lastResponseTexts[provider]) {
           _lastResponseTexts[provider] = currentText;
@@ -867,9 +1385,17 @@ function getGenerationStatus(provider, lastEl) {
         } else {
           _stableCounters[provider] = (_stableCounters[provider] || 0) + 1;
         }
-        if (_stableCounters[provider] >= 6) {
+        // Kimi 需要更高的稳定阈值，避免搜索空档期误判
+        const stableThreshold = provider === "kimi" ? 60 : 6;
+        // 最大超时保护：Kimi 超过 180s 仍未 onCompleted，强制完成
+        const maxTimeout = provider === "kimi" ? 180000 : 60000;
+        const isMaxTimeout = timeSinceSend > maxTimeout;
+
+        if (_stableCounters[provider] >= stableThreshold || isMaxTimeout) {
           console.log(
-            `[AI Multiverse] ${provider}: OK (stable 6 cycles despite isStreaming=true, gRPC safety valve)`,
+            `[AI Multiverse] ${provider}: OK (stable ${_stableCounters[provider]} cycles` +
+              (isMaxTimeout ? ", max timeout reached" : "") +
+              `, gRPC safety valve)`,
           );
           return AI_STATUS.OK;
         }
@@ -1084,8 +1610,12 @@ async function handleFillAndSend(text, provider, files = []) {
   const isQwen =
     provider === "qwen" ||
     /qianwen|tongyi|qwen\.ai/i.test(window.location.hostname);
+  const isGemini =
+    provider === "gemini" ||
+    /gemini\.google\.com/i.test(window.location.hostname);
   // 千问和 Kimi 的 UI 比较重，给它们更长的时间完成内部状态更新
-  const fillSettleDelay = isQwen ? 1200 : isKimi ? 800 : 50;
+  // Gemini 改用 paste 方式后，Quill 需要约 400ms 完成 Delta 更新和按钮激活
+  const fillSettleDelay = isQwen ? 1200 : isKimi ? 800 : isGemini ? 600 : 50;
 
   if (config.fillMethod === "main-world") {
     await requestMainWorldFill(config.selectors.input[0], text, provider);
@@ -1185,32 +1715,85 @@ async function fillContentEditable(element, text, provider) {
 
   await delay(DELAY.SHORT);
 
-  let success = false;
-  try {
-    success = document.execCommand("insertText", false, text);
-  } catch (e) {}
+  if (isKimi) {
+    // ── Kimi 专属填充逻辑 ────────────────────────────────────────────────────
+    // 诊断结论：
+    //   1. innerText 直接赋值后 React reconciliation 会在 100ms 内把 DOM 重置为空
+    //   2. execCommand("insertText") 遇到 \n 会拆成多段分别触发事件，内容混乱重复
+    //   3. beforeinput/input 的 data 字段被 Kimi 编辑器当作"要插入的内容"执行
+    // 方案：ClipboardEvent("paste") + DataTransfer 携带完整文本
+    //   Kimi 的 onPaste 处理器读取 clipboardData 中的完整文本并写入 React state，
+    //   多行文本完整保留，不截断，React state 正确更新。
+    element.focus();
+    // 先清空：selectAll + cut 触发 Kimi 的 cut 处理器清空 React state
+    try {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (e) {}
+    try {
+      element.dispatchEvent(
+        new ClipboardEvent("cut", { bubbles: true, cancelable: true }),
+      );
+    } catch (e) {}
+    try {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", text);
+      element.dispatchEvent(
+        new ClipboardEvent("paste", {
+          clipboardData: dt,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    } catch (e) {
+      console.warn(
+        "[AI Multiverse] Kimi fillContentEditable: paste failed:",
+        e,
+      );
+    }
+    console.log(
+      "[AI Multiverse] Kimi fillContentEditable: fill completed via paste, length:",
+      text.length,
+    );
+  } else {
+    // 其他模型：沿用原始 execCommand 逻辑（Gemini/Grok/ChatGPT/Yuanbao 等）
+    // ⚠️ 注意：execCommand("insertText") 对超过 5000 字符的长文本会静默截断。
+    // 智能总结场景下提示词 + 全部 AI 回答可能超过 10000 字符，需要直接使用 textContent。
+    let success = false;
+    if (text.length <= 5000) {
+      try {
+        success = document.execCommand("insertText", false, text);
+      } catch (e) {}
+    }
 
-  if (!success || element.innerText.trim().length === 0) {
-    if (isKimi) element.innerText = text;
-    else element.textContent = text;
+    if (!success || element.innerText.trim().length === 0) {
+      console.log(
+        "[AI Multiverse] fillContentEditable: using textContent for text, length:",
+        text.length,
+      );
+      element.textContent = text;
+    }
+
+    // Comprehensive events
+    const events = ["input", "change", "blur", "keyup"];
+    events.forEach((type) =>
+      element.dispatchEvent(new Event(type, { bubbles: true, composed: true })),
+    );
+
+    try {
+      const inputEventInit = {
+        bubbles: true,
+        composed: true,
+        data: text.substring(text.length - 1),
+        inputType: "insertText",
+      };
+      element.dispatchEvent(new InputEvent("beforeinput", inputEventInit));
+      element.dispatchEvent(new InputEvent("input", inputEventInit));
+    } catch (e) {}
   }
-
-  // Comprehensive events
-  const events = ["input", "change", "blur", "keyup"];
-  events.forEach((type) =>
-    element.dispatchEvent(new Event(type, { bubbles: true, composed: true })),
-  );
-
-  try {
-    const inputEventInit = {
-      bubbles: true,
-      composed: true,
-      data: text.substring(text.length - 1),
-      inputType: "insertText",
-    };
-    element.dispatchEvent(new InputEvent("beforeinput", inputEventInit));
-    element.dispatchEvent(new InputEvent("input", inputEventInit));
-  } catch (e) {}
 
   console.log("[AI Multiverse] fillContentEditable completed");
 }
@@ -1221,7 +1804,7 @@ async function sendMessage(inputEl, config, provider) {
     provider === "deepseek" ||
     provider === "qwen" ||
     /deepseek|qwen|qianwen/i.test(window.location.hostname);
-  const isGemini =
+  const isGeminiSend =
     provider === "gemini" ||
     /gemini\.google\.com/i.test(window.location.hostname);
   const isQwen =
@@ -1229,14 +1812,15 @@ async function sendMessage(inputEl, config, provider) {
     /qianwen|tongyi\.aliyun|qwen\.ai/i.test(window.location.hostname);
 
   const clickButton = async () => {
-    // Gemini 使用更短的等待时间，因为它的按钮通常很快就可用
-    const maxAttempts = isGemini
-      ? 20
+    // Gemini 改用 paste 方式后，Quill 更新 Delta 需要约 400-600ms，
+    // 因此增加等待次数和间隔，确保按钮从 disabled 变为 enabled 后再点击
+    const maxAttempts = isGeminiSend
+      ? 40
       : isAsyncUI
         ? MAX_BUTTON_WAIT_ATTEMPTS_ASYNC
         : MAX_BUTTON_WAIT_ATTEMPTS_SYNC;
-    const interval = isGemini
-      ? 50
+    const interval = isGeminiSend
+      ? 100
       : isAsyncUI
         ? BUTTON_WAIT_INTERVAL_ASYNC
         : BUTTON_WAIT_INTERVAL_SYNC;
@@ -1322,6 +1906,22 @@ async function sendMessage(inputEl, config, provider) {
           if (isDisabled) {
             console.log(
               `[AI Multiverse] Qwen: button not ready at attempt ${i}, waiting...`,
+            );
+          }
+        } else if (isGeminiSend) {
+          // Gemini 禁用态：优先看显式 disabled 标记，避免仅凭透明度误判
+          isDisabled =
+            clickableBtn.disabled ||
+            clickableBtn.getAttribute("disabled") !== null ||
+            clickableBtn.getAttribute("aria-disabled") === "true";
+          // 某些版本会用 pointer-events 禁止点击
+          if (!isDisabled) {
+            const style = window.getComputedStyle(clickableBtn);
+            if (style.pointerEvents === "none") isDisabled = true;
+          }
+          if (isDisabled) {
+            console.log(
+              `[AI Multiverse] Gemini: send button not ready at attempt ${i}, waiting...`,
             );
           }
         } else {

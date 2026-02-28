@@ -4779,20 +4779,20 @@ body.modal-resizing * {
     line-height: 1.5;
 }
 
-/* Language tags */
-.markdown-content pre[data-lang]::before {
-    content: attr(data-lang);
+/* Language tags inside code blocks */
+.code-lang-tag {
     position: absolute;
-    top: 6px;
-    right: 6px;
+    top: 4px;
+    left: 8px;
     background: var(--accent);
     color: white;
-    font-size: 10px;
-    padding: 2px 6px;
-    border-radius: 3px;
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 2px;
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    z-index: 5;
 }
 
 /* Code copy button */
@@ -4828,11 +4828,6 @@ body.modal-resizing * {
 
 .code-copy-btn:active {
     transform: scale(0.95);
-}
-
-/* Adjust language tag position when copy button is present */
-.markdown-content pre[data-lang]:has(.code-copy-btn)::before {
-    right: 42px; /* Move language tag to accommodate copy button */
 }
 
 /* Light theme syntax colors */

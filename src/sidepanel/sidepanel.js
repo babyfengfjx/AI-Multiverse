@@ -1309,6 +1309,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const codeBlocks = tempDiv.querySelectorAll("pre code");
         codeBlocks.forEach((block) => {
           const pre = block.parentElement;
+          
           // 获取语言类名（如果有的话）
           const languageClass = Array.from(pre.classList || block.classList)
             .find(cls => cls.startsWith('language-'));
@@ -1317,9 +1318,29 @@ document.addEventListener("DOMContentLoaded", async () => {
           // 应用语法高亮
           hljs.highlightElement(block, { language: language });
           
-          // 为代码块添加语言标签
+          // 设置代码块为相对定位，以便放置按钮和语言标签
+          pre.style.position = "relative";
+          
+          // 添加语言标签在代码块内部
           if (language && language !== 'plaintext') {
-            pre.setAttribute('data-lang', language);
+            const langTag = document.createElement("div");
+            langTag.className = "code-lang-tag";
+            langTag.textContent = language;
+            langTag.style.cssText = `
+              position: absolute;
+              top: 4px;
+              left: 8px;
+              background: var(--accent);
+              color: white;
+              font-size: 9px;
+              padding: 1px 4px;
+              border-radius: 2px;
+              font-weight: 500;
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
+              z-index: 5;
+            `;
+            pre.appendChild(langTag);
           }
           
           // 添加复制按钮
@@ -1353,7 +1374,6 @@ document.addEventListener("DOMContentLoaded", async () => {
           });
           
           // 将按钮添加到代码块容器
-          pre.style.position = "relative";
           pre.appendChild(copyBtn);
         });
       }

@@ -369,6 +369,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   const modelsModal = document.getElementById("modelsModal");
   const closeModelsBtn = document.getElementById("closeModelsBtn");
   const confirmModelsBtn = document.getElementById("confirmModelsBtn");
+  const selectAllBtn = document.getElementById("selectAllBtn");
+  const deselectAllBtn = document.getElementById("deselectAllBtn");
   const selectionBadge = document.getElementById("selectionBadge");
   const clearHistoryBtn = document.getElementById("clearHistoryBtn");
   const langToggleBtn = document.getElementById("langToggleBtn");
@@ -2538,6 +2540,21 @@ Here are the responses from each AI model:
   confirmModelsBtn.addEventListener("click", () => {
     saveSelectedProviders();
     modelsModal.classList.remove("active");
+  });
+
+  // 全选/全不选功能
+  selectAllBtn.addEventListener("click", () => {
+    const checkboxes = modelsModal.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(checkbox => {
+      checkbox.checked = true;
+    });
+  });
+
+  deselectAllBtn.addEventListener("click", () => {
+    const checkboxes = modelsModal.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(checkbox => {
+      checkbox.checked = false;
+    });
   });
 
   // 语言

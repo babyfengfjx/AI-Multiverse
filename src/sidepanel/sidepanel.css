@@ -4857,6 +4857,56 @@ body.modal-resizing * {
     color: #e36209;
 }
 
+/* Provider Controls - Select All/Deselect All */
+.provider-controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 0 4px;
+}
+
+.select-all-btn,
+.deselect-all-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border: 1px solid var(--border-color, #e1e5e9);
+    border-radius: 6px;
+    background: var(--background-secondary, #f8f9fa);
+    color: var(--text-primary, #24292f);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.select-all-btn:hover,
+.deselect-all-btn:hover {
+    background: var(--background-tertiary, #f1f3f4);
+    border-color: var(--accent, #0969da);
+    color: var(--accent, #0969da);
+}
+
+.select-all-btn:active,
+.deselect-all-btn:active {
+    transform: scale(0.98);
+}
+
+.select-all-btn svg,
+.deselect-all-btn svg {
+    flex-shrink: 0;
+}
+
+.deselect-all-btn {
+    color: var(--text-secondary, #656d76);
+}
+
+.deselect-all-btn:hover {
+    color: var(--error, #da3633);
+    border-color: var(--error, #da3633);
+}
+
 .markdown-content .hljs-symbol,
 .markdown-content .hljs-bullet {
     color: #005cc5;

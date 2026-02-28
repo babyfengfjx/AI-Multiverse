@@ -653,8 +653,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     // 更新全部展开/折叠按钮的标题
     const toggleAllBtn = document.getElementById("toggleAllBtn");
     if (toggleAllBtn) {
-      const hasExpandedConversations = conversations.some((c) => !c.collapsed);
-      toggleAllBtn.title = hasExpandedConversations ? "全部折叠" : "全部展开";
+      // 移除tooltip提示
     }
   }
 
@@ -871,7 +870,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (conv.collapsed) {
       // 折叠状态
       div.innerHTML = `
-                <div class="conversation-header clickable-header" data-conv-id="${conv.id}" style="cursor: pointer;" title="点击展开">
+                <div class="conversation-header clickable-header" data-conv-id="${conv.id}" style="cursor: pointer;">
                     <div class="conversation-question-collapsed">
                         <span class="question-icon">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1295,17 +1294,38 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (typeof DOMPurify !== "undefined") {
         html = DOMPurify.sanitize(html);
       }
-      
+
       // 处理链接：让所有链接在新窗口中打开
       const tempDiv = document.createElement("div");
       tempDiv.innerHTML = html;
       const links = tempDiv.querySelectorAll("a[href]");
-      links.forEach(link => {
+      links.forEach((link) => {
         link.setAttribute("target", "_blank");
         link.setAttribute("rel", "noopener noreferrer");
       });
-      html = tempDiv.innerHTML;
       
+      // 应用语法高亮到代码块
+      if (typeof hljs !== "undefined") {
+        const codeBlocks = tempDiv.querySelectorAll("pre code");
+        codeBlocks.forEach((block) => {
+          const pre = block.parentElement;
+          // 获取语言类名（如果有的话）
+          const languageClass = Array.from(pre.classList || block.classList)
+            .find(cls => cls.startsWith('language-'));
+          const language = languageClass ? languageClass.replace('language-', '') : 'plaintext';
+          
+          // 应用语法高亮
+          hljs.highlightElement(block, { language: language });
+          
+          // 为代码块添加语言标签
+          if (language && language !== 'plaintext') {
+            pre.setAttribute('data-lang', language);
+          }
+        });
+      }
+      
+      html = tempDiv.innerHTML;
+
       return html;
     } catch (e) {
       return escapeHTML(text);
@@ -1557,8 +1577,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     // 更新全部展开/折叠按钮的标题
     const toggleAllBtn = document.getElementById("toggleAllBtn");
     if (toggleAllBtn) {
-      const hasExpandedConversations = conversations.some((c) => !c.collapsed);
-      toggleAllBtn.title = hasExpandedConversations ? "全部折叠" : "全部展开";
+      // 移除tooltip提示
     }
   };
 
@@ -2468,8 +2487,7 @@ Here are the responses from each AI model:
   const toggleAllBtn = document.getElementById("toggleAllBtn");
   if (toggleAllBtn) {
     // 初始化按钮标题
-    const hasExpandedConversations = conversations.some((c) => !c.collapsed);
-    toggleAllBtn.title = hasExpandedConversations ? "全部折叠" : "全部展开";
+    // 移除tooltip提示
 
     toggleAllBtn.addEventListener("click", () => {
       // 检查当前是否有任何消息是展开的
@@ -2485,7 +2503,7 @@ Here are the responses from each AI model:
       renderConversations();
 
       // 更新按钮标题
-      toggleAllBtn.title = shouldExpandAll ? "全部折叠" : "全部展开";
+      // 移除tooltip提示
 
       // 如果是全部展开，滚到底部
       if (shouldExpandAll) {

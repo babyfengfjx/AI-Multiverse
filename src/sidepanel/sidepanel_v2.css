@@ -276,8 +276,9 @@
     background: var(--input-bg);
     color: var(--text-primary);
     font-size: 14px;
-    resize: none;
-    max-height: 120px;
+    resize: vertical;
+    min-height: 44px;
+    max-height: 40vh;
     font-family: inherit;
 }
 

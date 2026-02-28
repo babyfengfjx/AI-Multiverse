@@ -1593,8 +1593,9 @@ body {
     color: var(--text-primary);
     font-family: inherit;
     font-size: 14px;
-    resize: none;
-    max-height: 150px;
+    resize: vertical;
+    min-height: 44px;
+    max-height: 40vh;
     padding: 4px;
     line-height: 1.5;
 }
@@ -4063,8 +4064,9 @@ body.modal-resizing * {
     background: var(--input-bg);
     color: var(--text-primary);
     font-size: 14px;
-    resize: none;
-    max-height: 120px;
+    resize: vertical;
+    min-height: 44px;
+    max-height: 40vh;
     font-family: inherit;
 }
 

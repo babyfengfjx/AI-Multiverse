@@ -351,7 +351,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const confirmModelsBtn = document.getElementById("confirmModelsBtn");
   const selectionBadge = document.getElementById("selectionBadge");
   const clearHistoryBtn = document.getElementById("clearHistoryBtn");
-    const langToggleBtn = document.getElementById("langToggleBtn");
+  const langToggleBtn = document.getElementById("langToggleBtn");
 
   // === Initialization ===
   loadLanguage();
@@ -649,11 +649,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // 更新操作按钮状态
     updateActionButtons();
-    
+
     // 更新全部展开/折叠按钮的标题
     const toggleAllBtn = document.getElementById("toggleAllBtn");
     if (toggleAllBtn) {
-      const hasExpandedConversations = conversations.some(c => !c.collapsed);
+      const hasExpandedConversations = conversations.some((c) => !c.collapsed);
       toggleAllBtn.title = hasExpandedConversations ? "全部折叠" : "全部展开";
     }
   }
@@ -1347,6 +1347,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // 清空输入
     promptInput.value = "";
+    promptInput.style.height = "auto";
     selectedFiles = [];
     filePreview.style.display = "none";
 
@@ -1545,12 +1546,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     // 更新全部展开/折叠按钮的标题
     const toggleAllBtn = document.getElementById("toggleAllBtn");
     if (toggleAllBtn) {
-      const hasExpandedConversations = conversations.some(c => !c.collapsed);
+      const hasExpandedConversations = conversations.some((c) => !c.collapsed);
       toggleAllBtn.title = hasExpandedConversations ? "全部折叠" : "全部展开";
     }
   };
 
-  
   /**
    * 平铺布局切换
    */
@@ -2200,7 +2200,6 @@ Here are the responses from each AI model:
     selectionBadge.textContent = count;
   }
 
-
   /**
    * 加载语言
    */
@@ -2415,6 +2414,13 @@ Here are the responses from each AI model:
     }
   });
 
+  // 输入框自动调整高度
+  promptInput.addEventListener("input", function () {
+    this.style.height = "auto";
+    const newHeight = Math.min(this.scrollHeight, window.innerHeight * 0.4);
+    this.style.height = newHeight + "px";
+  });
+
   // 附加文件
   attachFileBtn.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", handleFileSelect);
@@ -2451,20 +2457,20 @@ Here are the responses from each AI model:
   const toggleAllBtn = document.getElementById("toggleAllBtn");
   if (toggleAllBtn) {
     // 初始化按钮标题
-    const hasExpandedConversations = conversations.some(c => !c.collapsed);
+    const hasExpandedConversations = conversations.some((c) => !c.collapsed);
     toggleAllBtn.title = hasExpandedConversations ? "全部折叠" : "全部展开";
-    
+
     toggleAllBtn.addEventListener("click", () => {
       // 检查当前是否有任何消息是展开的
-      const hasExpandedConversations = conversations.some(c => !c.collapsed);
-      
+      const hasExpandedConversations = conversations.some((c) => !c.collapsed);
+
       // 如果有展开的消息，则全部折叠；否则全部展开
       const shouldExpandAll = !hasExpandedConversations;
-      
+
       conversations.forEach((c) => {
         c.collapsed = !shouldExpandAll;
       });
-      
+
       renderConversations();
 
       // 更新按钮标题
@@ -2480,7 +2486,9 @@ Here are the responses from each AI model:
   }
 
   // 总结设置
-  const summarizeSettingsInModelsBtn = document.getElementById("summarizeSettingsInModelsBtn");
+  const summarizeSettingsInModelsBtn = document.getElementById(
+    "summarizeSettingsInModelsBtn",
+  );
   const summarizeSettingsModal = document.getElementById(
     "summarizeSettingsModal",
   );

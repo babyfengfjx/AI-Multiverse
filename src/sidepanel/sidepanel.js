@@ -123,7 +123,17 @@ function nodeToMarkdown(node, listDepth) {
         "\n" +
         lis
           .map(function (li) {
-            return ind + "- " + nodeToMarkdown(li, listDepth + 1).trim();
+            // 获取li的直接文本内容，避免递归处理导致的重复
+            var liContent = Array.from(li.childNodes)
+              .filter(function (child) {
+                return child.nodeType === 3 || (child.nodeType === 1 && child.tagName.toLowerCase() !== "ul" && child.tagName.toLowerCase() !== "ol");
+              })
+              .map(function (child) {
+                return child.nodeType === 3 ? child.textContent : nodeToMarkdown(child, 0);
+              })
+              .join("")
+              .trim();
+            return ind + "- " + liContent;
           })
           .join("\n") +
         "\n\n"
@@ -138,8 +148,18 @@ function nodeToMarkdown(node, listDepth) {
         "\n" +
         olis
           .map(function (li, i) {
+            // 获取li的直接文本内容，避免递归处理导致的重复
+            var liContent = Array.from(li.childNodes)
+              .filter(function (child) {
+                return child.nodeType === 3 || (child.nodeType === 1 && child.tagName.toLowerCase() !== "ul" && child.tagName.toLowerCase() !== "ol");
+              })
+              .map(function (child) {
+                return child.nodeType === 3 ? child.textContent : nodeToMarkdown(child, 0);
+              })
+              .join("")
+              .trim();
             return (
-              oind + (i + 1) + ". " + nodeToMarkdown(li, listDepth + 1).trim()
+              oind + (i + 1) + ". " + liContent
             );
           })
           .join("\n") +

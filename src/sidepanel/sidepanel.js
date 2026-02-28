@@ -1295,6 +1295,17 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (typeof DOMPurify !== "undefined") {
         html = DOMPurify.sanitize(html);
       }
+      
+      // 处理链接：让所有链接在新窗口中打开
+      const tempDiv = document.createElement("div");
+      tempDiv.innerHTML = html;
+      const links = tempDiv.querySelectorAll("a[href]");
+      links.forEach(link => {
+        link.setAttribute("target", "_blank");
+        link.setAttribute("rel", "noopener noreferrer");
+      });
+      html = tempDiv.innerHTML;
+      
       return html;
     } catch (e) {
       return escapeHTML(text);

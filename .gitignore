@@ -4,6 +4,11 @@
 # 但不排除README.md
 !README.md
 
+# 忽略所有test文件
+test_*
+*test*
+*.test.*
+
 # 忽略node_modules
 node_modules/
 

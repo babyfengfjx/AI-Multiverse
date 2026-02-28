@@ -481,6 +481,14 @@ async function extractYuanbaoViaAPI() {
       })
     });
 
+    // 添加调试信息
+    console.log("[AI Multiverse] Yuanbao API: Request timestamp:", new Date().toISOString());
+    console.log("[AI Multiverse] Yuanbao API: Request URL:", apiUrl.toString());
+    console.log("[AI Multiverse] Yuanbao API: Request body:", JSON.stringify({
+      conversationId: conversationId,
+      ...(agentId && { agentId: agentId })
+    }));
+
     if (!resp.ok) {
       console.warn(
         "[AI Multiverse] Yuanbao API: HTTP 错误",
@@ -491,7 +499,12 @@ async function extractYuanbaoViaAPI() {
     }
 
     const data = await resp.json();
-
+    
+    // 添加调试信息
+    console.log("[AI Multiverse] Yuanbao API: Response timestamp:", new Date().toISOString());
+    console.log("[AI Multiverse] Yuanbao API: Response status:", resp.status);
+    console.log("[AI Multiverse] Yuanbao API: Response headers:", Object.from(resp.headers.entries()));
+    
     // ── 3. 找到最新一条 AI 回复 ──────────────────────────────────────────────
     if (!data || !Array.isArray(data.convs)) {
       console.warn(

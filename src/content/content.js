@@ -1050,12 +1050,17 @@ function extractLatestResponse(provider) {
     let filteredLines = [];
     let inThinkingBlock = false;
     
+    // 添加调试日志
+    console.log("[AI Multiverse] Yuanbao: 开始逐行过滤，原始行数:", lines.length);
+    
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       
-      // 检测是否进入思考块
-      if (line.includes('深度思考') || line.includes('思考中') || line.includes('正在思考')) {
+      // 检测是否进入思考块 - 扩展关键词
+      if (line.includes('深度思考') || line.includes('思考中') || line.includes('正在思考') || 
+          line.includes('思考过程') || line.includes('已深度思考') || line.includes('深度搜索')) {
         inThinkingBlock = true;
+        console.log("[AI Multiverse] Yuanbao: 检测到思考块开始:", line.substring(0, 50));
         continue; // 跳过思考内容行
       }
       
@@ -1067,6 +1072,7 @@ function extractLatestResponse(provider) {
         (line.length > 20 && !line.includes('思考')) // 较长且不含思考关键词的正文
       )) {
         inThinkingBlock = false;
+        console.log("[AI Multiverse] Yuanbao: 检测到思考块结束:", line.substring(0, 50));
       }
       
       if (!inThinkingBlock) {
@@ -1075,6 +1081,20 @@ function extractLatestResponse(provider) {
     }
     
     trimmed = filteredLines.join('\n').trim();
+    console.log("[AI Multiverse] Yuanbao: 过滤后行数:", filteredLines.length, "过滤掉:", lines.length - filteredLines.length, "行");
+    
+    // 方式7：最后兜底 - 移除任何包含思考关键词的段落
+    const paragraphs = trimmed.split('\n\n');
+    const filteredParagraphs = paragraphs.filter(para => {
+      const shouldKeep = !para.includes('深度思考') && !para.includes('思考中') && 
+                       !para.includes('正在思考') && !para.includes('思考过程');
+      if (!shouldKeep) {
+        console.log("[AI Multiverse] Yuanbao: 移除思考段落:", para.substring(0, 50));
+      }
+      return shouldKeep;
+    });
+    
+    trimmed = filteredParagraphs.join('\n\n').trim();
   }
 
   // ── Gemini "Gemini说" / "Gemini says" 前缀清理 ──────────────────────────

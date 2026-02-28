@@ -1321,6 +1321,40 @@ document.addEventListener("DOMContentLoaded", async () => {
           if (language && language !== 'plaintext') {
             pre.setAttribute('data-lang', language);
           }
+          
+          // 添加复制按钮
+          const copyBtn = document.createElement("button");
+          copyBtn.className = "code-copy-btn";
+          copyBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+          copyBtn.setAttribute("aria-label", "Copy code");
+          copyBtn.setAttribute("title", "Copy code");
+          
+          // 添加复制功能
+          copyBtn.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            try {
+              const codeText = block.textContent || block.innerText;
+              await navigator.clipboard.writeText(codeText);
+              
+              // 显示复制成功状态
+              const originalHTML = copyBtn.innerHTML;
+              copyBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+              copyBtn.style.color = "var(--success, #2ea043)";
+              
+              setTimeout(() => {
+                copyBtn.innerHTML = originalHTML;
+                copyBtn.style.color = "";
+              }, 1500);
+            } catch (err) {
+              console.error("Failed to copy code:", err);
+            }
+          });
+          
+          // 将按钮添加到代码块容器
+          pre.style.position = "relative";
+          pre.appendChild(copyBtn);
         });
       }
       

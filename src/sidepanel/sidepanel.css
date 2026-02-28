@@ -4795,6 +4795,46 @@ body.modal-resizing * {
     letter-spacing: 0.5px;
 }
 
+/* Code copy button */
+.code-copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: all 0.2s ease;
+    z-index: 10;
+}
+
+.markdown-content pre:hover .code-copy-btn {
+    opacity: 1;
+    border-color: var(--accent);
+}
+
+.code-copy-btn:hover {
+    background: var(--accent);
+    color: white;
+    transform: scale(1.05);
+}
+
+.code-copy-btn:active {
+    transform: scale(0.95);
+}
+
+/* Adjust language tag position when copy button is present */
+.markdown-content pre[data-lang]:has(.code-copy-btn)::before {
+    right: 42px; /* Move language tag to accommodate copy button */
+}
+
 /* Light theme syntax colors */
 .markdown-content .hljs-comment,
 .markdown-content .hljs-quote {

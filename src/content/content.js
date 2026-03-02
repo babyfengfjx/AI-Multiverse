@@ -2428,10 +2428,25 @@ async function handleFillAndSend(text, provider, files = []) {
   // 这样可以等待 React 状态更新后再点击，不受 content script 隔离限制
   if (isQwen) {
     console.log("[AI Multiverse] Qwen: requesting main world click");
+    // 发送网络流状态开始
+    chrome.runtime.sendMessage({
+      action: "streaming_started",
+      provider: "qwen",
+      conversationId: Date.now().toString()
+    });
+    
     // 千问使用主世界点击，不重复调用 sendMessage
     await requestMainWorldClick(provider);
     // 等待确保消息发送完成 (增加等待时间到2秒)
     await delay(2000);
+    
+    // 发送网络流状态完成
+    chrome.runtime.sendMessage({
+      action: "streaming_completed",
+      provider: "qwen",
+      conversationId: Date.now().toString()
+    });
+    
     // Release submission lock
     delete _submissionLock[provider];
     return;

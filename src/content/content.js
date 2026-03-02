@@ -19,6 +19,289 @@ if (typeof AI_STATUS === "undefined") {
   };
 }
 
+function parseClaudeAssistantFromConversationPayload(data) {
+  const msgs = Array.isArray(data?.chat_messages) ? data.chat_messages : null;
+  if (!msgs || msgs.length === 0) return null;
+
+  const leafUuid = data?.current_leaf_message_uuid || null;
+  let target = null;
+
+  if (leafUuid) {
+    target = msgs.find((m) => m && m.uuid === leafUuid) || null;
+  }
+
+  // If leaf isn't an assistant message (rare), fall back to latest assistant
+  if (!target || target.sender !== "assistant") {
+    target = [...msgs]
+      .reverse()
+      .find((m) => m && m.sender === "assistant" && Array.isArray(m.content));
+  }
+  if (!target) return null;
+
+  const parts = [];
+  if (Array.isArray(target.content)) {
+    for (const item of target.content) {
+      if (!item || item.type !== "text") continue;
+      const t = (item.text || "").toString();
+      if (t.trim()) parts.push(t);
+    }
+  }
+  const combined = parts.join("\n\n").trim();
+  if (!combined) return null;
+
+  return {
+    uuid: target.uuid || null,
+    text: combined,
+  };
+}
+
+async function fetchClaudeConversationSnapshot(orgId, conversationId) {
+  try {
+    const apiUrl = new URL(
+      `https://claude.ai/api/organizations/${orgId}/chat_conversations/${conversationId}`,
+    );
+    apiUrl.searchParams.set("tree", "True");
+    apiUrl.searchParams.set("rendering_mode", "messages");
+    apiUrl.searchParams.set("render_all_tools", "true");
+    apiUrl.searchParams.set("consistency", "strong");
+
+    const resp = await fetch(apiUrl.toString(), {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return parseClaudeAssistantFromConversationPayload(data);
+  } catch (e) {
+    return null;
+  }
+}
+
+function findClaudeConversationIdFromUrl() {
+  try {
+    const urlObj = new URL(window.location.href);
+    const pathParts = urlObj.pathname.replace(/^\/+|\/+$/g, "").split("/");
+    // /chat/<conversationUuid>
+    if (pathParts[0] === "chat" && pathParts[1] && /^[0-9a-f-]{36}$/i.test(pathParts[1])) {
+      return pathParts[1];
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function findClaudeOrganizationIdHeuristic() {
+  const uuidRe = /^[0-9a-f-]{36}$/i;
+  const candidates = [];
+
+  const scanStorage = (storage) => {
+    if (!storage) return;
+    try {
+      for (let i = 0; i < storage.length; i++) {
+        const k = storage.key(i);
+        if (!k) continue;
+        const v = storage.getItem(k);
+        if (!v) continue;
+
+        // Direct UUID value
+        if (uuidRe.test(v) && /(org|organization)/i.test(k)) {
+          candidates.push(v);
+          continue;
+        }
+
+        // JSON payload containing org uuid
+        if (v.length < 20000 && (/(org|organization)/i.test(k) || v.includes("organization"))) {
+          const hits = v.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi);
+          if (hits && hits.length) {
+            hits.forEach((id) => {
+              if (uuidRe.test(id)) candidates.push(id);
+            });
+          }
+        }
+      }
+    } catch (e) {}
+  };
+
+  scanStorage(window.localStorage);
+  scanStorage(window.sessionStorage);
+
+  // Next.js hydration data sometimes contains org uuids
+  try {
+    const nextData = window.__NEXT_DATA__;
+    const raw = nextData ? JSON.stringify(nextData) : "";
+    if (raw) {
+      const hits = raw.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi);
+      if (hits && hits.length) {
+        hits.forEach((id) => {
+          if (uuidRe.test(id)) candidates.push(id);
+        });
+      }
+    }
+  } catch (e) {}
+
+  const unique = [...new Set(candidates.filter(Boolean))];
+  // Heuristic: org uuid tends to be stable; pick the first.
+  return unique.length ? unique[0] : null;
+}
+
+async function fetchClaudeOrganizationIdFromAPI() {
+  const tryUrls = [
+    "https://claude.ai/api/organizations",
+    "https://claude.ai/api/organizations?limit=20",
+  ];
+
+  for (const u of tryUrls) {
+    try {
+      const resp = await fetch(u, {
+        method: "GET",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+
+      if (!resp.ok) continue;
+      const data = await resp.json();
+
+      const pickUuid = (obj) => {
+        if (!obj) return null;
+        if (typeof obj === "string") {
+          return /^[0-9a-f-]{36}$/i.test(obj) ? obj : null;
+        }
+        if (typeof obj === "object") {
+          const direct = obj.uuid || obj.id || obj.organization_uuid;
+          if (typeof direct === "string" && /^[0-9a-f-]{36}$/i.test(direct)) {
+            return direct;
+          }
+        }
+        return null;
+      };
+
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          const id = pickUuid(item);
+          if (id) return id;
+        }
+      }
+
+      if (data && typeof data === "object") {
+        const list =
+          data.organizations || data.data || data.items || data.results || null;
+        if (Array.isArray(list)) {
+          for (const item of list) {
+            const id = pickUuid(item);
+            if (id) return id;
+          }
+        }
+        const maybe = pickUuid(data);
+        if (maybe) return maybe;
+      }
+    } catch (e) {}
+  }
+
+  return null;
+}
+
+async function extractClaudeViaAPI() {
+  try {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const conversationId = findClaudeConversationIdFromUrl();
+    if (!conversationId) return null;
+
+    if (!globalThis.__aiMultiverseClaudeOrgId) {
+      globalThis.__aiMultiverseClaudeOrgId = await fetchClaudeOrganizationIdFromAPI();
+    }
+    let orgId = globalThis.__aiMultiverseClaudeOrgId;
+    if (!orgId) {
+      orgId = await fetchClaudeOrganizationIdFromAPI();
+      globalThis.__aiMultiverseClaudeOrgId = orgId;
+    }
+    if (!orgId) {
+      orgId = findClaudeOrganizationIdHeuristic();
+      globalThis.__aiMultiverseClaudeOrgId = orgId;
+    }
+    if (!orgId) return null;
+
+    const apiUrl = new URL(
+      `https://claude.ai/api/organizations/${orgId}/chat_conversations/${conversationId}`,
+    );
+    apiUrl.searchParams.set("tree", "True");
+    apiUrl.searchParams.set("rendering_mode", "messages");
+    apiUrl.searchParams.set("render_all_tools", "true");
+    // Prefer strong consistency to avoid returning stale leaf message right after completion
+    apiUrl.searchParams.set("consistency", "strong");
+
+    const extractFromPayload = (data) => parseClaudeAssistantFromConversationPayload(data);
+
+    // If streaming just ended, Claude may not have updated the conversation snapshot yet.
+    // Retry a couple of times with short backoff to avoid returning previous message.
+    const ns = _networkStreamingStatus?.claude;
+
+    if (ns && ns.isStreaming) {
+      return { status: AI_STATUS.GENERATING, text: "", html: "" };
+    }
+
+    const timeSinceStreamEnd =
+      ns && ns.isStreaming === false && ns.endTime ? Date.now() - ns.endTime : null;
+    const timeSinceSend = Date.now() - (_lastSendTimes?.claude || 0);
+    const isFreshWindow =
+      (timeSinceStreamEnd != null && timeSinceStreamEnd < 12000) ||
+      timeSinceSend < 12000;
+    const maxAttempts = isFreshWindow ? 8 : 1;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const resp = await fetch(apiUrl.toString(), {
+        method: "GET",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      const extracted = extractFromPayload(data);
+      if (!extracted) return null;
+
+      const lastUuid = globalThis.__aiMultiverseClaudeLastAssistantUuid || null;
+      const lastText = globalThis.__aiMultiverseClaudeLastAssistantText || "";
+      const baselineUuid = isFreshWindow
+        ? globalThis.__aiMultiverseClaudePrevAssistantUuid || lastUuid
+        : lastUuid;
+      const baselineText = isFreshWindow
+        ? globalThis.__aiMultiverseClaudePrevAssistantText || lastText
+        : lastText;
+
+      // Accept if message uuid changed, or text changed (covers rare same-uuid updates)
+      const isNew =
+        (extracted.uuid && extracted.uuid !== baselineUuid) ||
+        extracted.text !== baselineText;
+
+      if (isNew) {
+        console.log("[AI Multiverse] Claude: New content detected", {
+          uuidChanged: extracted.uuid && extracted.uuid !== baselineUuid,
+          textChanged: extracted.text !== baselineText,
+          oldLength: baselineText.length,
+          newLength: extracted.text.length
+        });
+        
+        globalThis.__aiMultiverseClaudeLastAssistantUuid = extracted.uuid;
+        globalThis.__aiMultiverseClaudeLastAssistantText = extracted.text;
+        return { status: "ok", text: extracted.text, html: "" };
+      }
+
+      if (!isFreshWindow) {
+        return { status: "ok", text: extracted.text, html: "" };
+      }
+
+      await sleep(450);
+    }
+
+    return { status: AI_STATUS.GENERATING, text: "", html: "" };
+  } catch (e) {
+    return null;
+  }
+}
+
 // === Constants ===
 const DELAY = {
   SHORT: 50,
@@ -343,19 +626,74 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       extractYuanbaoViaAPI()
         .then((apiResult) => {
           if (apiResult && apiResult.status === "ok" && apiResult.text) {
+            console.log("[AI Multiverse] Yuanbao: API 提取成功，字数:", apiResult.text.length);
             sendResponse(apiResult);
           } else {
+            console.log("[AI Multiverse] Yuanbao: API 提取失败或无内容，降级到 DOM 方式");
             // API 失败时降级到 DOM 方式
             const result = extractLatestResponse(request.provider);
             sendResponse(result);
           }
         })
-        .catch(() => {
+        .catch((err) => {
+          console.error("[AI Multiverse] Yuanbao: API 提取异常，降级到 DOM 方式:", err);
           const result = extractLatestResponse(request.provider);
           sendResponse(result);
         });
       return true; // 异步响应
     }
+
+    // Claude: 优先通过同源 conversation API 提取结构化内容（更稳定），失败则降级到 DOM。
+    if (request.provider === "claude") {
+      extractClaudeViaAPI()
+        .then((apiResult) => {
+          if (apiResult && apiResult.status === "ok" && apiResult.text) {
+            // Validate that this is actually new content, not cached old content
+            const lastText = globalThis.__aiMultiverseClaudeLastAssistantText || "";
+            const lastUuid = globalThis.__aiMultiverseClaudeLastAssistantUuid || null;
+            
+            const isNewContent = 
+              (apiResult.uuid && apiResult.uuid !== lastUuid) ||
+              (apiResult.text !== lastText);
+            
+            if (isNewContent) {
+              console.log("[AI Multiverse] Claude: API returned new content", {
+                uuidChanged: apiResult.uuid && apiResult.uuid !== lastUuid,
+                textChanged: apiResult.text !== lastText,
+                oldLength: lastText.length,
+                newLength: apiResult.text.length
+              });
+              
+              // Update the last content tracking
+              globalThis.__aiMultiverseClaudeLastAssistantUuid = apiResult.uuid;
+              globalThis.__aiMultiverseClaudeLastAssistantText = apiResult.text;
+              
+              sendResponse(apiResult);
+              return;
+            } else {
+              console.log("[AI Multiverse] Claude: API returned old content, treating as stale");
+              // API returned old content, fall through to DOM extraction
+            }
+          }
+
+          const lastSend = globalThis.__aiMultiverseClaudeLastSendTime || 0;
+          if (Date.now() - lastSend < 15000) {
+            sendResponse({ status: AI_STATUS.GENERATING, text: "", html: "" });
+            return;
+          }
+
+          console.log("[AI Multiverse] Claude: Falling back to DOM extraction");
+          const result = extractLatestResponse(request.provider);
+          sendResponse(result);
+        })
+        .catch((err) => {
+          console.error("[AI Multiverse] Claude: API extraction failed, falling back to DOM:", err);
+          const result = extractLatestResponse(request.provider);
+          sendResponse(result);
+        });
+      return true;
+    }
+
     const result = extractLatestResponse(request.provider);
     sendResponse(result);
     return;
@@ -642,9 +980,17 @@ function extractLatestResponse(provider) {
     const primarySelectors = config.selectors.response.slice(0, 3);
     for (const sel of primarySelectors) {
       try {
-        const elements = Array.from(document.querySelectorAll(sel)).filter(
-          (el) => !el.getAttribute("data-multiverse-old"),
-        );
+        let elements;
+        if (window._forceIgnoreOldMarkers) {
+          // 强制模式：忽略 data-multiverse-old 标记
+          elements = Array.from(document.querySelectorAll(sel));
+          console.log(`[AI Multiverse] Force mode: ignoring old markers for selector: ${sel}`);
+        } else {
+          // 正常模式：过滤掉已标记的元素
+          elements = Array.from(document.querySelectorAll(sel)).filter(
+            (el) => !el.getAttribute("data-multiverse-old"),
+          );
+        }
         if (elements.length < 1) continue;
         const lastEl = elements[elements.length - 1];
         const lastText = (lastEl.innerText || lastEl.textContent || "").trim();
@@ -652,7 +998,12 @@ function extractLatestResponse(provider) {
           // 最新容器为空，检查是否正在生成
           const networkStatus = _networkStreamingStatus["qwen"];
           const stopBtn = document.querySelector(
-            'button:has(svg[data-icon-type="qwpcicon-stopChat"]), [class*="stop-icon"]',
+            'button:has(svg[data-icon-type="qwpcicon-stopChat"]), ' +
+            'button[aria-label*="停止"], ' +
+            'button[title*="停止"], ' +
+            'button[class*="stop"], ' +
+            '[class*="stop-icon"], ' +
+            'button:has([class*="stop"])'
           );
           const timeSinceSend = Date.now() - (_lastSendTimes["qwen"] || 0);
           if (
@@ -706,9 +1057,16 @@ function extractLatestResponse(provider) {
 
   for (const sel of config.selectors.response) {
     try {
-      const elements = Array.from(document.querySelectorAll(sel)).filter(
-        (el) => !el.getAttribute("data-multiverse-old"),
-      );
+      let elements;
+      if (window._forceIgnoreOldMarkers) {
+        // 强制模式：忽略 data-multiverse-old 标记
+        elements = Array.from(document.querySelectorAll(sel));
+      } else {
+        // 正常模式：过滤掉已标记的元素
+        elements = Array.from(document.querySelectorAll(sel)).filter(
+          (el) => !el.getAttribute("data-multiverse-old"),
+        );
+      }
 
       if (elements.length === 0) continue;
 
@@ -731,6 +1089,48 @@ function extractLatestResponse(provider) {
         }
       }
 
+      // Claude 特殊处理：确保只选择 assistant 的消息，避免选中用户的问题
+      if (provider === "claude") {
+        // 检查选中的元素是否属于用户消息
+        const isUserMessage = (el) => {
+          // 检查常见的用户消息标识
+          const userSelectors = [
+            '[data-testid="user-message"]',
+            '[data-role="user"]',
+            '.user-message',
+            '.human-message',
+            '[class*="user"]',
+            '[class*="human"]'
+          ];
+          
+          return userSelectors.some(selector => {
+            try {
+              return el.matches(selector) || el.closest(selector);
+            } catch (e) {
+              return false;
+            }
+          });
+        };
+
+        // 如果选中的是用户消息，寻找下一个 assistant 消息
+        if (isUserMessage(element)) {
+          console.log("[AI Multiverse] Claude: Selected element is user message, looking for assistant message");
+          
+          // 在所有元素中寻找 assistant 消息
+          const assistantElements = elements.filter(el => !isUserMessage(el));
+          if (assistantElements.length > 0) {
+            element = assistantElements[assistantElements.length - 1];
+            console.log(
+              "[AI Multiverse] Claude: Found assistant message, len=",
+              (element.innerText || "").length,
+            );
+          } else {
+            console.log("[AI Multiverse] Claude: No assistant message found, skipping this selector");
+            continue; // 跳过这个选择器
+          }
+        }
+      }
+
       // DeepSeek 特殊处理：
       // DeepSeek R1 先输出 THINK 片段（思考块），再输出 RESPONSE 片段（真正答案）。
       // 两者在 DOM 里可能共用同一个父容器，而 THINK 内容远比 RESPONSE 长，
@@ -747,7 +1147,7 @@ function extractLatestResponse(provider) {
           document.querySelectorAll(
             "div.ds-markdown, .ds-render-content, .ds-markdown--block",
           ),
-        ).filter((el) => !el.getAttribute("data-multiverse-old"));
+        ).filter((el) => window._forceIgnoreOldMarkers ? true : !el.getAttribute("data-multiverse-old"));
 
         if (allDs.length > 0) {
           // 过滤掉在思考块容器内的元素
@@ -917,7 +1317,37 @@ function extractLatestResponse(provider) {
   // 会把上一次的答案误判为正在生成的内容，导致面板展示旧回答。
   // 智能总结场景：Gemini 需处理大量文本，生成时间可能超过 30-60s，
   // 因此将时间窗口从 15s 延长到 90s，并优先依赖网络流式状态判断。
-  if (!bestEl && provider === "gemini") {
+  if (!bestEl && provider === "gemini" && (window._forceFallback || window._forceIgnoreOldMarkers)) {
+    console.log("[AI Multiverse] Gemini: Force mode enabled, bypassing normal restrictions");
+    
+    // 强制模式：直接忽略所有限制，使用兜底逻辑
+    try {
+      const allModelResponses = Array.from(
+        document.querySelectorAll(
+          "model-response, ms-model-response, message-content",
+        ),
+      );
+      if (allModelResponses.length > 0) {
+        const nonEmpty = allModelResponses.filter(
+          (el) => (el.innerText || "").trim().length > 0,
+        );
+        if (nonEmpty.length > 0) {
+          bestEl = nonEmpty[nonEmpty.length - 1];
+          console.log(
+            "[AI Multiverse] Gemini: force fallback found non-empty element, len:",
+            (bestEl.innerText || "").length,
+          );
+        } else if (allModelResponses.length > 0) {
+          bestEl = allModelResponses[allModelResponses.length - 1];
+          console.log(
+            "[AI Multiverse] Gemini: force fallback using last element (empty)",
+          );
+        }
+      }
+    } catch (e) {
+      console.warn("[AI Multiverse] Gemini: force fallback error:", e);
+    }
+  } else if (!bestEl && provider === "gemini") {
     const _geminiTimeSinceSend = Date.now() - (_lastSendTimes["gemini"] || 0);
     const _geminiNetworkStatus = _networkStreamingStatus["gemini"];
     // 条件1：网络层正在流式传输 → 必然在生成中，直接抑制
@@ -1028,6 +1458,8 @@ function extractLatestResponse(provider) {
   // removeThinkingBlocks 已在 DOM 层移除 .hyc-component-deepsearch-cot__think，
   // 但 Yuanbao 可能更新了结构，在此用文本兜底：移除"深度思考"块直到正文开始。
   if (provider === "yuanbao") {
+    console.log("[AI Multiverse] Yuanbao: 开始过滤深度思考内容，原始长度:", trimmed.length);
+    
     // 方式1：移除以"深度思考"/"已深度思考"开头的整个段落块（直到空行或下一大段）
     trimmed = trimmed.replace(/^已?深度思考[\s\S]*?(?=\n{2,}|$)/, "").trim();
     // 方式2：移除行首为"深度思考"的单行标签（含括号内容，如"已深度思考(用时3秒)"）
@@ -1050,17 +1482,14 @@ function extractLatestResponse(provider) {
     let filteredLines = [];
     let inThinkingBlock = false;
     
-    // 添加调试日志
-    console.log("[AI Multiverse] Yuanbao: 开始逐行过滤，原始行数:", lines.length);
-    
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       
       // 检测是否进入思考块 - 扩展关键词
       if (line.includes('深度思考') || line.includes('思考中') || line.includes('正在思考') || 
-          line.includes('思考过程') || line.includes('已深度思考') || line.includes('深度搜索')) {
+          line.includes('思考过程') || line.includes('已深度思考') || line.includes('深度搜索') ||
+          line.includes('深度推理') || line.includes('深度分析') || line.includes('深度探究')) {
         inThinkingBlock = true;
-        console.log("[AI Multiverse] Yuanbao: 检测到思考块开始:", line.substring(0, 50));
         continue; // 跳过思考内容行
       }
       
@@ -1072,7 +1501,6 @@ function extractLatestResponse(provider) {
         (line.length > 20 && !line.includes('思考')) // 较长且不含思考关键词的正文
       )) {
         inThinkingBlock = false;
-        console.log("[AI Multiverse] Yuanbao: 检测到思考块结束:", line.substring(0, 50));
       }
       
       if (!inThinkingBlock) {
@@ -1081,20 +1509,24 @@ function extractLatestResponse(provider) {
     }
     
     trimmed = filteredLines.join('\n').trim();
-    console.log("[AI Multiverse] Yuanbao: 过滤后行数:", filteredLines.length, "过滤掉:", lines.length - filteredLines.length, "行");
     
     // 方式7：最后兜底 - 移除任何包含思考关键词的段落
     const paragraphs = trimmed.split('\n\n');
     const filteredParagraphs = paragraphs.filter(para => {
       const shouldKeep = !para.includes('深度思考') && !para.includes('思考中') && 
-                       !para.includes('正在思考') && !para.includes('思考过程');
-      if (!shouldKeep) {
-        console.log("[AI Multiverse] Yuanbao: 移除思考段落:", para.substring(0, 50));
-      }
+                       !para.includes('正在思考') && !para.includes('思考过程') &&
+                       !para.includes('深度推理') && !para.includes('深度分析') && !para.includes('深度探究');
       return shouldKeep;
     });
     
     trimmed = filteredParagraphs.join('\n\n').trim();
+    
+    // 方式8：新增 - 移除可能的思考标题和分隔符
+    trimmed = trimmed.replace(/^[-=]{3,}.*?[-=]{3,}\s*$/gm, '').trim(); // 移除分隔线
+    trimmed = trimmed.replace(/^【.*?思考.*?】\s*$/gm, '').trim(); // 移除【思考】标题
+    trimmed = trimmed.replace(/^\[.*?思考.*?\]\s*$/gm, '').trim(); // 移除[思考]标题
+    
+    console.log("[AI Multiverse] Yuanbao: 过滤后长度:", trimmed.length);
   }
 
   // ── Gemini "Gemini说" / "Gemini says" 前缀清理 ──────────────────────────
@@ -1526,6 +1958,10 @@ function getGenerationStatus(provider, lastEl) {
   }
 
   // 3. 内容稳定性检测：连续 3 次轮询（~2.4s）内容不变则判为完成
+  // 千问特殊处理：需要更长的稳定时间且检查停止按钮状态
+  const isQwen = provider === "qwen" || /qianwen|tongyi|qwen\.ai/i.test(window.location.hostname);
+  const requiredStableCycles = isQwen ? 8 : 3; // 千问需要 8 个周期（约 6.4 秒）
+  
   if (currentText !== _lastResponseTexts[provider]) {
     _lastResponseTexts[provider] = currentText;
     _stableCounters[provider] = 0;
@@ -1537,11 +1973,34 @@ function getGenerationStatus(provider, lastEl) {
 
   _stableCounters[provider] = (_stableCounters[provider] || 0) + 1;
   console.log(
-    `[AI Multiverse] ${provider}: Stable for ${_stableCounters[provider]}/3 cycles`,
+    `[AI Multiverse] ${provider}: Stable for ${_stableCounters[provider]}/${requiredStableCycles} cycles`,
   );
 
-  if (_stableCounters[provider] >= 3) {
-    console.log(`[AI Multiverse] ${provider}: OK (content stable 3 cycles)`);
+  // 千问额外检查：如果停止按钮还存在，继续等待
+  if (isQwen) {
+    const stopBtn = document.querySelector(
+      'button:has(svg[data-icon-type="qwpcicon-stopChat"]), ' +
+      'button[aria-label*="停止"], ' +
+      'button[title*="停止"], ' +
+      'button[class*="stop"], ' +
+      '[class*="stop-icon"], ' +
+      'button:has([class*="stop"])'
+    );
+    const isGenerating = stopBtn && (
+      stopBtn.style.display !== 'none' && 
+      stopBtn.offsetParent !== null && 
+      !stopBtn.disabled
+    );
+    
+    if (isGenerating) {
+      console.log(`[AI Multiverse] Qwen: Still generating (stop button active), resetting stability`);
+      _stableCounters[provider] = 0;
+      return AI_STATUS.GENERATING;
+    }
+  }
+
+  if (_stableCounters[provider] >= requiredStableCycles) {
+    console.log(`[AI Multiverse] ${provider}: OK (content stable ${requiredStableCycles} cycles)`);
     return AI_STATUS.OK;
   }
 
@@ -1567,6 +2026,29 @@ async function handleFillAndSend(text, provider, files = []) {
 
   // 0. Mark send time IMMEDIATELY to prevent early status completion
   _lastSendTimes[provider] = Date.now();
+
+  if (provider === "claude") {
+    globalThis.__aiMultiverseClaudeLastSendTime = _lastSendTimes[provider];
+    
+    // Capture a baseline of the last assistant message BEFORE sending.
+    // During the fresh window after send, we only accept an assistant message
+    // that differs from this baseline, otherwise we keep polling.
+    
+    // Only capture baseline if we already have a last assistant message
+    if (globalThis.__aiMultiverseClaudeLastAssistantUuid && globalThis.__aiMultiverseClaudeLastAssistantText) {
+      globalThis.__aiMultiverseClaudePrevAssistantUuid = globalThis.__aiMultiverseClaudeLastAssistantUuid;
+      globalThis.__aiMultiverseClaudePrevAssistantText = globalThis.__aiMultiverseClaudeLastAssistantText;
+      console.log("[AI Multiverse] Claude: Captured baseline before send", {
+        uuid: globalThis.__aiMultiverseClaudePrevAssistantUuid?.substring(0, 8) + "...",
+        textLength: globalThis.__aiMultiverseClaudePrevAssistantText.length
+      });
+    } else {
+      // If no previous message, clear the baseline
+      globalThis.__aiMultiverseClaudePrevAssistantUuid = null;
+      globalThis.__aiMultiverseClaudePrevAssistantText = "";
+      console.log("[AI Multiverse] Claude: No previous message to capture as baseline");
+    }
+  }
 
   console.log("[AI Multiverse Content] handleFillAndSend called");
   console.log("[AI Multiverse Content] Provider:", provider);
@@ -1645,6 +2127,42 @@ async function handleFillAndSend(text, provider, files = []) {
     config.selectors = { input: [], button: [] };
   }
 
+  // Claude: capture a baseline assistant message BEFORE sending.
+  // This avoids treating a stale conversation snapshot as a fresh completion.
+  if (provider === "claude") {
+    try {
+      const conversationId = findClaudeConversationIdFromUrl();
+      if (conversationId) {
+        if (!globalThis.__aiMultiverseClaudeOrgId) {
+          globalThis.__aiMultiverseClaudeOrgId =
+            (await fetchClaudeOrganizationIdFromAPI()) || null;
+        }
+        const orgId = globalThis.__aiMultiverseClaudeOrgId;
+
+        if (orgId) {
+          const withTimeout = (p, ms) =>
+            Promise.race([
+              p,
+              new Promise((resolve) => setTimeout(() => resolve(null), ms)),
+            ]);
+
+          const baseline = await withTimeout(
+            fetchClaudeConversationSnapshot(orgId, conversationId),
+            1200,
+          );
+
+          if (baseline && baseline.text) {
+            globalThis.__aiMultiverseClaudePrevAssistantUuid = baseline.uuid || null;
+            globalThis.__aiMultiverseClaudePrevAssistantText = baseline.text || "";
+            // Keep last in sync so extract logic has a stable reference on first run
+            globalThis.__aiMultiverseClaudeLastAssistantUuid = baseline.uuid || null;
+            globalThis.__aiMultiverseClaudeLastAssistantText = baseline.text || "";
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
   // 0. Mark existing responses as old
   if (config.selectors.response) {
     config.selectors.response.forEach((sel) => {
@@ -1680,9 +2198,19 @@ async function handleFillAndSend(text, provider, files = []) {
   const isGemini =
     provider === "gemini" ||
     /gemini\.google\.com/i.test(window.location.hostname);
+  const isClaude =
+    provider === "claude" || /claude\.ai/i.test(window.location.hostname);
   // 千问和 Kimi 的 UI 比较重，给它们更长的时间完成内部状态更新
   // Gemini 改用 paste 方式后，Quill 需要约 400ms 完成 Delta 更新和按钮激活
-  const fillSettleDelay = isQwen ? 1200 : isKimi ? 800 : isGemini ? 600 : 50;
+  const fillSettleDelay = isQwen
+    ? 1200
+    : isKimi
+      ? 800
+      : isGemini
+        ? 600
+        : isClaude
+          ? 450
+          : 50;
 
   if (config.fillMethod === "main-world") {
     await requestMainWorldFill(config.selectors.input[0], text, provider);
@@ -1878,6 +2406,192 @@ async function sendMessage(inputEl, config, provider) {
     provider === "qwen" ||
     /qianwen|tongyi\.aliyun|qwen\.ai/i.test(window.location.hostname);
 
+  const sendClaude = async () => {
+    // Strategy priority:
+    // 1) form.requestSubmit() (closest form or a likely form on page)
+    // 2) click submit/send button (broad, Claude-specific selectors)
+    // 3) dispatch a richer Enter event sequence (some frameworks ignore bare key events)
+    try {
+      const form =
+        inputEl.closest("form") ||
+        document.querySelector(
+          'form:has(div[contenteditable="true"][role="textbox"])',
+        ) ||
+        document.querySelector('form:has(textarea)');
+
+      if (form && typeof form.requestSubmit === "function") {
+        try {
+          form.requestSubmit();
+          return true;
+        } catch (e) {}
+      }
+    } catch (e) {}
+
+    const clickKnownClaudeSend = () => {
+      try {
+        const btn = document.querySelector('button[aria-label="Send message"]');
+        if (btn && isElementVisible(btn) && !isElementDisabled(btn)) {
+          btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+          btn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+          if (typeof btn.click === "function") btn.click();
+          else btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    };
+
+    if (clickKnownClaudeSend()) return true;
+
+    const clickClaudeButton = () => {
+      // Claude frequently uses non-semantic buttons; scan near the editor first.
+      const nearCandidates = [];
+      try {
+        let cur = inputEl;
+        for (let i = 0; i < 8 && cur; i++) {
+          if (cur.parentElement) cur = cur.parentElement;
+          if (!cur) break;
+          const els = Array.from(
+            cur.querySelectorAll(
+              'button, [role="button"], [data-testid], [data-test], [data-test-id]',
+            ),
+          );
+          nearCandidates.push(...els);
+        }
+      } catch (e) {}
+
+      const pageSelectors = [
+        // generic
+        'button[type="submit"]',
+        'button[aria-label*="send" i]',
+        'button[title*="send" i]',
+        '[role="button"][aria-label*="send" i]',
+        // test ids
+        '[data-testid*="send" i]',
+        '[data-testid*="submit" i]',
+        '[data-test-id*="send" i]',
+        '[data-test-id*="submit" i]',
+        // class name heuristics
+        'button[class*="send" i]',
+        'button[class*="submit" i]',
+        '[role="button"][class*="send" i]',
+        '[role="button"][class*="submit" i]',
+      ];
+
+      const pageCandidates = [];
+      for (const sel of pageSelectors) {
+        try {
+          pageCandidates.push(...Array.from(document.querySelectorAll(sel)));
+        } catch (e) {}
+      }
+
+      const candidates = [...new Set([...nearCandidates, ...pageCandidates])];
+      const score = (el) => {
+        let s = 0;
+        try {
+          const txt = (el.innerText || el.textContent || "").trim();
+          const aria = (el.getAttribute("aria-label") || "").trim();
+          const title = (el.getAttribute("title") || "").trim();
+          const testid =
+            (el.getAttribute("data-testid") ||
+              el.getAttribute("data-test-id") ||
+              "")
+              .toString()
+              .trim();
+          const cls = (el.className || "").toString();
+
+          const combined = `${txt} ${aria} ${title} ${testid} ${cls}`.toLowerCase();
+          if (combined.includes("send")) s += 8;
+          if (combined.includes("submit")) s += 6;
+          if (combined.includes("发送")) s += 8;
+          if (combined.includes("提交")) s += 6;
+          if (combined.includes("arrow") || combined.includes("paper")) s += 2;
+          if (el.querySelector && el.querySelector("svg")) s += 2;
+          // prefer elements close to input
+          if (inputEl.contains(el) || el.contains(inputEl)) s += 3;
+          if (el.closest && el.closest("footer")) s += 1;
+        } catch (e) {}
+        return s;
+      };
+
+      const pick = candidates
+        .filter((el) => el && isElementVisible(el) && !isElementDisabled(el))
+        .map((el) => ({ el, s: score(el) }))
+        .sort((a, b) => b.s - a.s)[0];
+
+      if (!pick || pick.s < 4) return false;
+      const btn =
+        pick.el.tagName === "BUTTON" || pick.el.getAttribute("role") === "button"
+          ? pick.el
+          : pick.el.closest("button") || pick.el.closest('[role="button"]') || pick.el;
+      if (!btn) return false;
+      try {
+        btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+        btn.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      } catch (e) {}
+      try {
+        if (typeof btn.click === "function") btn.click();
+        else btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      } catch (e) {
+        return false;
+      }
+      return true;
+    };
+
+    if (clickClaudeButton()) return true;
+
+    try {
+      inputEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      inputEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      inputEl.focus();
+      if (typeof inputEl.click === "function") inputEl.click();
+    } catch (e) {}
+
+    const opts = {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      charCode: 13,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    };
+
+    try {
+      // End composition explicitly (some editors won't submit while composing)
+      inputEl.dispatchEvent(
+        new CompositionEvent("compositionend", { bubbles: true, composed: true }),
+      );
+
+      const active = document.activeElement || inputEl;
+      active.dispatchEvent(new KeyboardEvent("keydown", opts));
+
+      // Many editors treat Enter as paragraph insertion
+      active.dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          composed: true,
+          inputType: "insertParagraph",
+          data: "\n",
+        }),
+      );
+      active.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          composed: true,
+          inputType: "insertParagraph",
+          data: "\n",
+        }),
+      );
+
+      active.dispatchEvent(new KeyboardEvent("keyup", opts));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
   const clickButton = async () => {
     // Gemini 改用 paste 方式后，Quill 更新 Delta 需要约 400-600ms，
     // 因此增加等待次数和间隔，确保按钮从 disabled 变为 enabled 后再点击
@@ -2069,6 +2783,14 @@ async function sendMessage(inputEl, config, provider) {
     }
     return false;
   };
+
+  // Claude is special: Enter simulation is often ignored by its editor.
+  // Use a provider-specific submit routine to improve reliability.
+  if (provider === "claude") {
+    await delay(DELAY.SHORT);
+    await sendClaude();
+    return;
+  }
 
   switch (config.sendMethod) {
     case "form": {
@@ -2584,3 +3306,40 @@ async function uploadToYuanbao(file, config) {
 
   throw new Error("Could not find file input for Yuanbao");
 }
+
+// === Message Listener for Force Gemini Re-detect ===
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "force_extract_gemini_response") {
+    try {
+      console.log("[AI Multiverse] Force Gemini re-detect triggered");
+      
+      // 临时保存忽略旧标记的设置
+      const originalIgnoreOld = window._forceIgnoreOldMarkers;
+      const originalForceFallback = window._forceFallback;
+      
+      window._forceIgnoreOldMarkers = request.ignoreOldMarkers || true;
+      window._forceFallback = request.forceFallback || true;
+      
+      // 强制重新提取 Gemini 响应
+      const result = extractLatestResponse("gemini");
+      
+      // 恢复原始设置
+      window._forceIgnoreOldMarkers = originalIgnoreOld;
+      window._forceFallback = originalForceFallback;
+      
+      console.log("[AI Multiverse] Force Gemini re-detect result:", result);
+      
+      sendResponse({ 
+        status: "ok", 
+        response: result 
+      });
+    } catch (error) {
+      console.error("[AI Multiverse] Force Gemini re-detect error:", error);
+      sendResponse({ 
+        status: "error", 
+        error: error.message 
+      });
+    }
+    return true;
+  }
+});

@@ -45,6 +45,20 @@ function nodeToMarkdown(node, listDepth) {
 
   var tag = node.tagName.toLowerCase();
 
+  // Yuanbao (腾讯元宝) 列表的编号/圆点是独立的 dot 节点，
+  // 在 HTML -> Markdown 过程中若保留，会与 Markdown 列表自身的标记重复。
+  // 这里直接忽略这些“装饰性”节点。
+  try {
+    const cls = node.className || "";
+    if (
+      typeof cls === "string" &&
+      (cls.includes("ybc-li-component__dot-wp") ||
+        cls.includes("ybc-li-component_dot"))
+    ) {
+      return "";
+    }
+  } catch (e) {}
+
   function children(depth) {
     depth = depth !== undefined ? depth : listDepth;
     return Array.from(node.childNodes)
@@ -123,17 +137,52 @@ function nodeToMarkdown(node, listDepth) {
         "\n" +
         lis
           .map(function (li) {
-            // 获取li的直接文本内容，避免递归处理导致的重复
-            var liContent = Array.from(li.childNodes)
+            // 获取 li 的直接内容（排除嵌套 ul/ol），并去掉 li 内部可能自带的列表前缀，避免重复
+            var directContent = Array.from(li.childNodes)
               .filter(function (child) {
-                return child.nodeType === 3 || (child.nodeType === 1 && child.tagName.toLowerCase() !== "ul" && child.tagName.toLowerCase() !== "ol");
+                return (
+                  child.nodeType === 3 ||
+                  (child.nodeType === 1 &&
+                    child.tagName.toLowerCase() !== "ul" &&
+                    child.tagName.toLowerCase() !== "ol")
+                );
               })
               .map(function (child) {
-                return child.nodeType === 3 ? child.textContent : nodeToMarkdown(child, 0);
+                return child.nodeType === 3
+                  ? child.textContent
+                  : nodeToMarkdown(child, 0);
               })
               .join("")
               .trim();
-            return ind + "- " + liContent;
+
+            // 去掉可能混入的 bullet / dash 前缀
+            directContent = directContent.replace(/^\s*(?:[-*•·▪▫]+)\s+/, "");
+
+            // 去掉可能混入的编号前缀（无序列表里也可能包含 "1." / "1、" / "（1）" / "1)" 等）
+            directContent = directContent
+              .replace(/^\s*[（(]?\s*\d+\s*[)）]?\s*[.、)]\s+/, "")
+              .replace(/^\s*\d+\s*[.、)]\s+/, "");
+
+            // 追加嵌套列表（如有），保留结构
+            var nestedLists = Array.from(li.children || []).filter(
+              function (el) {
+                var t = el.tagName ? el.tagName.toLowerCase() : "";
+                return t === "ul" || t === "ol";
+              },
+            );
+            var nestedMd = nestedLists
+              .map(function (nested) {
+                return nodeToMarkdown(nested, listDepth + 1).trimEnd();
+              })
+              .filter(Boolean)
+              .join("\n");
+
+            return (
+              ind +
+              "- " +
+              (directContent || "") +
+              (nestedMd ? "\n" + nestedMd : "")
+            );
           })
           .join("\n") +
         "\n\n"
@@ -148,18 +197,49 @@ function nodeToMarkdown(node, listDepth) {
         "\n" +
         olis
           .map(function (li, i) {
-            // 获取li的直接文本内容，避免递归处理导致的重复
-            var liContent = Array.from(li.childNodes)
+            // 获取 li 的直接内容（排除嵌套 ul/ol），并去掉 li 内部可能自带的编号，避免重复
+            var directContent = Array.from(li.childNodes)
               .filter(function (child) {
-                return child.nodeType === 3 || (child.nodeType === 1 && child.tagName.toLowerCase() !== "ul" && child.tagName.toLowerCase() !== "ol");
+                return (
+                  child.nodeType === 3 ||
+                  (child.nodeType === 1 &&
+                    child.tagName.toLowerCase() !== "ul" &&
+                    child.tagName.toLowerCase() !== "ol")
+                );
               })
               .map(function (child) {
-                return child.nodeType === 3 ? child.textContent : nodeToMarkdown(child, 0);
+                return child.nodeType === 3
+                  ? child.textContent
+                  : nodeToMarkdown(child, 0);
               })
               .join("")
               .trim();
+
+            // 去掉可能混入的编号前缀（如 "1." / "1、" / "（1）" / "1)" 等）
+            directContent = directContent
+              .replace(/^\s*[（(]?\s*\d+\s*[)）]?\s*[.、)]\s+/, "")
+              .replace(/^\s*\d+\s*[.、)]\s+/, "");
+
+            // 追加嵌套列表（如有），保留结构
+            var nestedLists = Array.from(li.children || []).filter(
+              function (el) {
+                var t = el.tagName ? el.tagName.toLowerCase() : "";
+                return t === "ul" || t === "ol";
+              },
+            );
+            var nestedMd = nestedLists
+              .map(function (nested) {
+                return nodeToMarkdown(nested, listDepth + 1).trimEnd();
+              })
+              .filter(Boolean)
+              .join("\n");
+
             return (
-              oind + (i + 1) + ". " + liContent
+              oind +
+              (i + 1) +
+              ". " +
+              (directContent || "") +
+              (nestedMd ? "\n" + nestedMd : "")
             );
           })
           .join("\n") +
@@ -313,6 +393,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     "chatgpt",
     "qwen",
     "yuanbao",
+    "claude",
+    "yiyan",
+    "doubao",
+    "mistral",
+    "metaso",
+    "chatglm",
+    "stepfun",
   ];
   let conversations = []; // 所有对话
   let currentConversationId = null; // 当前对话ID
@@ -369,8 +456,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   const modelsModal = document.getElementById("modelsModal");
   const closeModelsBtn = document.getElementById("closeModelsBtn");
   const confirmModelsBtn = document.getElementById("confirmModelsBtn");
-  const selectAllBtn = document.getElementById("selectAllBtn");
-  const deselectAllBtn = document.getElementById("deselectAllBtn");
+  const toggleAllBtn = document.getElementById("toggleAllBtn");
+  const modelToggleAllBtn = document.getElementById("modelToggleAllBtn");
   const selectionBadge = document.getElementById("selectionBadge");
   const clearHistoryBtn = document.getElementById("clearHistoryBtn");
   const langToggleBtn = document.getElementById("langToggleBtn");
@@ -396,6 +483,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       id: id,
       question: question,
       timestamp: id,
+      startTime: id,
       providers: providers,
       files: files,
       responses: {},
@@ -411,6 +499,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         text: "",
         html: "",
         timestamp: null,
+        startTime: id,
+        endTime: null,
+        durationMs: null,
       };
     });
 
@@ -456,6 +547,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     const newText = data.text || "";
     const newHtml = data.html || "";
 
+    const shouldFinalizeDuration =
+      newStatus === AI_STATUS.OK &&
+      currentResp.durationMs == null &&
+      currentResp.startTime != null;
+
     // --- Valid Transitions Logic ---
     const terminalStates = [
       AI_STATUS.OK,
@@ -475,6 +571,14 @@ document.addEventListener("DOMContentLoaded", async () => {
         currentResp.html = newHtml;
       }
       currentResp.timestamp = Date.now();
+
+      if (shouldFinalizeDuration) {
+        currentResp.endTime = currentResp.timestamp;
+        currentResp.durationMs = Math.max(
+          0,
+          currentResp.endTime - currentResp.startTime,
+        );
+      }
       wasUpdated = true;
     }
     // 2. If already in a terminal state, only update if content grew
@@ -483,6 +587,14 @@ document.addEventListener("DOMContentLoaded", async () => {
         currentResp.text = newText;
         currentResp.html = newHtml;
         currentResp.timestamp = Date.now();
+
+        if (shouldFinalizeDuration) {
+          currentResp.endTime = currentResp.timestamp;
+          currentResp.durationMs = Math.max(
+            0,
+            currentResp.endTime - currentResp.startTime,
+          );
+        }
         wasUpdated = true;
       }
     } else if (
@@ -493,6 +605,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       currentResp.text = newText;
       currentResp.html = newHtml;
       currentResp.timestamp = Date.now();
+
+      if (shouldFinalizeDuration) {
+        currentResp.endTime = currentResp.timestamp;
+        currentResp.durationMs = Math.max(
+          0,
+          currentResp.endTime - currentResp.startTime,
+        );
+      }
       wasUpdated = true;
     } else if (currentResp.status === AI_STATUS.GENERATING) {
       // 正常情况：新内容比当前内容长或相等，直接更新
@@ -501,6 +621,14 @@ document.addEventListener("DOMContentLoaded", async () => {
         currentResp.text = newText;
         currentResp.html = newHtml;
         currentResp.timestamp = Date.now();
+
+        if (shouldFinalizeDuration) {
+          currentResp.endTime = currentResp.timestamp;
+          currentResp.durationMs = Math.max(
+            0,
+            currentResp.endTime - currentResp.startTime,
+          );
+        }
         wasUpdated = true;
       } else {
         // 修复Bug：若对话刚创建（15秒内），允许文本长度回退。
@@ -513,6 +641,14 @@ document.addEventListener("DOMContentLoaded", async () => {
           currentResp.text = newText;
           currentResp.html = newHtml;
           currentResp.timestamp = Date.now();
+
+          if (shouldFinalizeDuration) {
+            currentResp.endTime = currentResp.timestamp;
+            currentResp.durationMs = Math.max(
+              0,
+              currentResp.endTime - currentResp.startTime,
+            );
+          }
           wasUpdated = true;
         }
       }
@@ -689,7 +825,29 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       // 1. Response Card click (except buttons inside)
       const card = target.closest(".response-card");
-      const button = target.closest("button, .control-btn");
+      // Only treat our UI control buttons (with data-action) as "buttons" here.
+      // Response content may include generic <button> (e.g., code copy button) and
+      // should NOT block card click / question toggle.
+      // Note: .card-detail-btn should NOT be blocked as it's for historical conversations
+      const button = target.closest(
+        "button[data-action]:not(.card-detail-btn), .control-btn[data-action], .card-refresh-btn",
+      );
+
+      // 0. Collapsed conversation header click
+      const collapsedHeader = target.closest(".conversation-header");
+      if (collapsedHeader && !button) {
+        // Skip toggle if the user is selecting/has selected text
+        const selection = window.getSelection();
+        if (selection && selection.toString().length > 0) {
+          return;
+        }
+        const convId = parseInt(
+          collapsedHeader.dataset.convId ||
+            collapsedHeader.closest(".conversation-item")?.dataset.id,
+        );
+        if (convId) window.toggleConversation(convId);
+        return;
+      }
 
       // 0a. Delete conversation button
       const deleteConvBtn = target.closest(".delete-conv-btn");
@@ -1008,53 +1166,66 @@ document.addEventListener("DOMContentLoaded", async () => {
       const config = AI_CONFIG[provider];
       if (!config) return;
 
-      // Show refresh button for stuck generates or errors
-      const showRefresh =
-        response.status === "generating" ||
-        response.status === "error" ||
-        response.status === "loading";
-      const actionBtn = showRefresh
-        ? `
-                <button class="card-refresh-btn" data-action="refresh" data-provider="${provider}" data-conv-id="${conv.id}" title="手动刷新获取最新回复">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                        <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
-                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-                    </svg>
-                </button>`
-        : `
-                <button class="card-detail-btn" data-action="detail" data-provider="${provider}" data-conv-id="${conv.id}" title="查看详情">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                        <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
-                    </svg>
-                </button>`;
+      const durationMsResolved =
+        response && response.durationMs != null
+          ? response.durationMs
+          : response && response.startTime != null
+            ? Math.max(
+                0,
+                (response.endTime || response.timestamp || Date.now()) -
+                  response.startTime,
+              )
+            : null;
+      const durationSec =
+        durationMsResolved != null
+          ? Math.max(0, Math.round(durationMsResolved / 1000))
+          : null;
 
-      html += `
-                <div class="response-card ${response.status}" data-provider="${provider}" data-conv-id="${conv.id}" style="cursor: pointer;">
-                    <div class="response-card-header">
-                        <div class="response-card-info">
-                            <img src="${config.icon}" class="provider-icon-img" alt="${config.name}">
-                            <span>${config.name}</span>
-                            ${getStatusBadge(response.status)}
-                        </div>
-                        <div class="response-card-actions">
-                            ${response.status === "ok" && response.text ? `<div class="response-char-count">${response.text.length} 字</div>` : ""}
-                            ${actionBtn}
-                        </div>
-                    </div>
-                    <div class="response-card-body">
-                        ${renderResponseBody(response)}
-                    </div>
-                </div>
-            `;
-    });
+    // Show refresh button only for latest conversation
+    const isLatestConversation = conv.id === currentConversationId;
+    const showRefresh = isLatestConversation; // Always show refresh for latest conversation
+    const actionBtn = showRefresh
+      ? `
+              <button class="card-refresh-btn" data-action="refresh" data-provider="${provider}" data-conv-id="${conv.id}" title="手动刷新获取最新回复">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                      <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
+                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                  </svg>
+              </button>`
+      : `
+              <button class="card-detail-btn" data-action="detail" data-provider="${provider}" data-conv-id="${conv.id}" title="查看详情">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                      <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                  </svg>
+              </button>`;
+
+    html += `
+              <div class="response-card ${response.status}" data-provider="${provider}" data-conv-id="${conv.id}" style="cursor: pointer;">
+                  <div class="response-card-header">
+                      <div class="response-card-info">
+                          <img src="${config.icon}" class="provider-icon-img" alt="${config.name}">
+                          <span>${config.name}</span>
+                          ${getStatusBadge(response.status)}
+                      </div>
+                      <div class="response-card-actions">
+                          ${response.status === "ok" && response.text ? `<div class="response-char-count">${response.text.length} 字</div>` : ""}
+                          ${response.startTime != null && durationSec != null ? `<div class="response-time-count">${durationSec} 秒</div>` : ""}
+                          ${actionBtn}
+                      </div>
+                  </div>
+                  <div class="response-card-body">
+                      ${renderResponseBody(response)}
+                  </div>
+              </div>
+          `;
+  });
 
     return html;
   }
 
   /**
-   * 手动刷新指定提供商的回复
-   * 无论内容脚本返回什么状态，强制将该 provider 标记为完成，
-   * 并在所有 provider 都完成后存档对话、停止轮询。
+   * 手动刷新单个 provider 的响应
+   * 支持内容验证和防误刷新逻辑
    */
   window.manualRefreshProvider = async function (provider, convId) {
     const conv = conversations.find((c) => c.id === convId);
@@ -1070,71 +1241,135 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     try {
+      // 保存当前内容用于对比
+      const currentResponse = conv.responses[provider];
+      const currentText = currentResponse?.text || "";
+      const currentHtml = currentResponse?.html || "";
+
       // 尝试从 AI 页面获取最新内容
       const result = await chrome.runtime.sendMessage({
         action: "fetch_all_responses",
         providers: [provider],
       });
 
-      let text = "";
-      let html = "";
+      let newText = "";
+      let newHtml = "";
 
       if (result && result.status === "ok" && result.responses) {
         const response = result.responses[provider];
-        text = response?.text || "";
-        html = response?.html || "";
+        newText = response?.text || "";
+        newHtml = response?.html || "";
       }
 
-      // ── 核心修复：无论内容是否为空，强制标记为完成 ──────────────────
-      // 用户主动点击刷新 = 明确表示"以当前内容为最终结果"
-      // 不能因为内容为空就拒绝更新，否则按钮永远不起作用
-      const terminalStates = [
-        AI_STATUS.OK,
-        AI_STATUS.ERROR,
-        AI_STATUS.NOT_OPEN,
-        AI_STATUS.TIMEOUT,
-      ];
+      // Gemini 特殊处理：如果获取的内容为空，尝试强制重新检测
+      if (provider === 'gemini' && (!newText || newText.trim().length === 0)) {
+        console.log(`[AI Multiverse] ${provider}: 手动刷新获取内容为空，尝试强制重新检测`);
+        
+        // 发送特殊的强制检测消息
+        const forceResult = await chrome.runtime.sendMessage({
+          action: "force_gemini_redetect",
+        });
+        
+        if (forceResult && forceResult.status === "ok" && forceResult.response) {
+          newText = forceResult.response.text || "";
+          newHtml = forceResult.response.html || "";
+          console.log(`[AI Multiverse] ${provider}: 强制重新检测成功，获取到内容长度: ${newText.length}`);
+        }
+      }
 
-      conv.responses[provider] = {
-        status: AI_STATUS.OK,
-        text: text,
-        html: html,
-        timestamp: Date.now(),
-      };
+      // 直接更新内容，不做任何验证
+      if (newText && newText.trim().length > 0) {
+        console.log(`[AI Multiverse] ${provider}: 手动刷新直接更新内容，长度: ${newText.length}`);
+        
+        // 更新响应数据
+        const currentResponse = conv.responses[provider];
+        currentResponse.text = newText;
+        currentResponse.html = newHtml;
+        currentResponse.status = "ok";
+        currentResponse.timestamp = Date.now();
 
-      // 检查是否所有 provider 都已完成 → 存档对话 → 停止轮询
-      const allDone = conv.providers.every((p) => {
-        const r = conv.responses[p];
-        return r && terminalStates.includes(r.status);
-      });
-
-      if (allDone && !conv.archived) {
-        await archiveConversation(convId);
+        // 更新UI
+        updateConversationUI(convId);
+        
+        // 显示温馨提示
+        showNotification(`${provider}: 已加载最新内容，请确保模型窗口中的对话与当前问题匹配`, "info");
       } else {
-        // 即使未全部完成，也持久化当前状态
-        await saveAllToStorage();
+        showNotification(`${provider}: 未获取到内容，请确保模型窗口已打开并显示回答`, "error");
       }
 
-      // 局部更新 UI，不触发全量重渲染
-      updateConversationUI(convId);
-      updateActionButtons();
-
-      const providerName = AI_CONFIG[provider]?.name || provider;
-      if (text) {
-        showNotification(`已刷新 ${providerName} 的回复`, "success");
-      } else {
-        showNotification(`${providerName} 当前无内容，已标记为完成`, "info");
-      }
-    } catch (e) {
-      console.error("[ManualRefresh] Error:", e);
-      showNotification("刷新失败，请稍候重试", "error");
       // 恢复按钮状态
       if (btn) {
         btn.disabled = false;
-        btn.style.opacity = "";
+        btn.style.opacity = "1";
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="m3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>';
+      }
+
+    } catch (error) {
+      console.error(`[AI Multiverse] ${provider}: 手动刷新失败`, error);
+      showNotification(`${provider}: 刷新失败 - ${error.message}`, "error");
+    } finally {
+      // 恢复按钮状态
+      if (btn) {
+        btn.disabled = false;
+        btn.style.opacity = "1";
       }
     }
   };
+
+  /**
+   * 显示通知信息
+   */
+  function showNotification(message, type = "info") {
+    // 创建通知元素
+    const notification = document.createElement("div");
+    notification.className = `notification notification-${type}`;
+    notification.textContent = message;
+    
+    // 添加样式
+    Object.assign(notification.style, {
+      position: "fixed",
+      top: "20px",
+      right: "20px",
+      padding: "12px 16px",
+      borderRadius: "6px",
+      fontSize: "14px",
+      fontWeight: "500",
+      zIndex: "10000",
+      maxWidth: "300px",
+      wordWrap: "break-word",
+      boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+      transition: "all 0.3s ease"
+    });
+    
+    // 设置颜色
+    switch (type) {
+      case "success":
+        notification.style.backgroundColor = "#10b981";
+        notification.style.color = "white";
+        break;
+      case "warning":
+        notification.style.backgroundColor = "#f59e0b";
+        notification.style.color = "white";
+        break;
+      case "error":
+        notification.style.backgroundColor = "#ef4444";
+        notification.style.color = "white";
+        break;
+      default:
+        notification.style.backgroundColor = "#3b82f6";
+        notification.style.color = "white";
+    }
+    
+    // 添加到页面
+    document.body.appendChild(notification);
+    
+    // 自动移除
+    setTimeout(() => {
+      if (notification.parentNode) {
+        notification.parentNode.removeChild(notification);
+      }
+    }, 3000);
+  }
 
   /**
    * 将响应内容统一转换为 Markdown 再渲染，无论来源平台格式如何都保持一致
@@ -1289,6 +1524,36 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (positionDots) positionDots.innerHTML = "";
     document.getElementById("modalPositionIndicator")?.classList.add("hidden");
 
+    // 自适应宽度：确保模态框不会超出主窗口宽度
+    const detailContent = detailModal.querySelector('.detail-content');
+    if (detailContent) {
+      const windowWidth = window.innerWidth;
+      const modalMaxWidth = 1400; // CSS 中的最大宽度
+      const modalWidthPercent = 94; // CSS 中的宽度百分比
+      
+      // 计算合适的宽度
+      let suitableWidth;
+      if (windowWidth < 400) {
+        // 很小的窗口
+        suitableWidth = '95%';
+      } else if (windowWidth < 600) {
+        // 小窗口
+        suitableWidth = '92%';
+      } else if (windowWidth < 800) {
+        // 中等窗口
+        suitableWidth = '90%';
+      } else {
+        // 大窗口，使用原来的设置
+        suitableWidth = modalWidthPercent + '%';
+      }
+      
+      // 应用宽度，但不超过最大宽度
+      detailContent.style.width = suitableWidth;
+      detailContent.style.maxWidth = modalMaxWidth + 'px';
+      
+      console.log(`[Modal Summary] Window width: ${windowWidth}px, Modal width: ${suitableWidth}`);
+    }
+
     detailModal.classList.add("active");
   };
 
@@ -1323,26 +1588,82 @@ document.addEventListener("DOMContentLoaded", async () => {
         link.setAttribute("target", "_blank");
         link.setAttribute("rel", "noopener noreferrer");
       });
-      
+
+      const toCircledNumber = (n) => {
+        const map = {
+          0: "⓪",
+          1: "①",
+          2: "②",
+          3: "③",
+          4: "④",
+          5: "⑤",
+          6: "⑥",
+          7: "⑦",
+          8: "⑧",
+          9: "⑨",
+          10: "⑩",
+          11: "⑪",
+          12: "⑫",
+          13: "⑬",
+          14: "⑭",
+          15: "⑮",
+          16: "⑯",
+          17: "⑰",
+          18: "⑱",
+          19: "⑲",
+          20: "⑳",
+        };
+        return map[n] || `(${n})`;
+      };
+
+      const maybeBeautifyCitationLink = (link) => {
+        const raw = (link.textContent || "").trim();
+        if (!raw) return;
+
+        if (!/^[-−]?\d+(?:\s*[-‑–—]\s*\d+)*$/.test(raw)) return;
+        if (link.querySelector("img, svg")) return;
+
+        const nums = raw.match(/\d+/g) || [];
+        if (nums.length < 1) return;
+
+        const normalized = nums
+          .map((s) => parseInt(s, 10))
+          .filter((n) => Number.isFinite(n));
+        if (normalized.length < 1) return;
+
+        link.classList.add("ds-citation-link");
+        link.dataset.rawCitation = raw;
+        link.textContent = normalized.map((n) => toCircledNumber(n)).join("");
+      };
+
+      links.forEach((link) => {
+        try {
+          maybeBeautifyCitationLink(link);
+        } catch (e) {}
+      });
+
       // 应用语法高亮到代码块
       if (typeof hljs !== "undefined") {
         const codeBlocks = tempDiv.querySelectorAll("pre code");
         codeBlocks.forEach((block) => {
           const pre = block.parentElement;
-          
+
           // 获取语言类名（如果有的话）
-          const languageClass = Array.from(pre.classList || block.classList)
-            .find(cls => cls.startsWith('language-'));
-          const language = languageClass ? languageClass.replace('language-', '') : 'plaintext';
-          
+          const languageClass = Array.from(
+            pre.classList || block.classList,
+          ).find((cls) => cls.startsWith("language-"));
+          const language = languageClass
+            ? languageClass.replace("language-", "")
+            : "plaintext";
+
           // 应用语法高亮
           hljs.highlightElement(block, { language: language });
-          
+
           // 设置代码块为相对定位，以便放置按钮和语言标签
           pre.style.position = "relative";
-          
+
           // 添加语言标签在代码块内部
-          if (language && language !== 'plaintext') {
+          if (language && language !== "plaintext") {
             const langTag = document.createElement("div");
             langTag.className = "code-lang-tag";
             langTag.textContent = language;
@@ -1362,28 +1683,28 @@ document.addEventListener("DOMContentLoaded", async () => {
             `;
             pre.appendChild(langTag);
           }
-          
+
           // 添加复制按钮
           const copyBtn = document.createElement("button");
           copyBtn.className = "code-copy-btn";
           copyBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
           copyBtn.setAttribute("aria-label", "Copy code");
           copyBtn.setAttribute("title", "Copy code");
-          
+
           // 添加复制功能
           copyBtn.addEventListener("click", async (e) => {
             e.preventDefault();
             e.stopPropagation();
-            
+
             try {
               const codeText = block.textContent || block.innerText;
               await navigator.clipboard.writeText(codeText);
-              
+
               // 显示复制成功状态
               const originalHTML = copyBtn.innerHTML;
               copyBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
               copyBtn.style.color = "var(--success, #2ea043)";
-              
+
               setTimeout(() => {
                 copyBtn.innerHTML = originalHTML;
                 copyBtn.style.color = "";
@@ -1392,12 +1713,12 @@ document.addEventListener("DOMContentLoaded", async () => {
               console.error("Failed to copy code:", err);
             }
           });
-          
+
           // 将按钮添加到代码块容器
           pre.appendChild(copyBtn);
         });
       }
-      
+
       html = tempDiv.innerHTML;
 
       return html;
@@ -1507,19 +1828,33 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
 
       try {
-        const result = await chrome.runtime.sendMessage({
-          action: "fetch_all_responses",
-          providers: activeProviders,
-        });
-
-        if (result && result.status === "ok" && result.responses) {
-          for (const provider of activeProviders) {
-            const response = result.responses[provider];
-            if (response) {
-              updateConversationResponse(convId, provider, response);
-            }
-          }
+        if (!startPollingResponses._inflight) {
+          startPollingResponses._inflight = new Map();
         }
+        const inflight = startPollingResponses._inflight;
+        if (!inflight.has(convId)) inflight.set(convId, new Set());
+        const inFlightSet = inflight.get(convId);
+
+        const tasks = activeProviders
+          .filter((p) => !inFlightSet.has(p))
+          .map(async (provider) => {
+            inFlightSet.add(provider);
+            try {
+              const result = await chrome.runtime.sendMessage({
+                action: "fetch_response",
+                provider: provider,
+              });
+              if (result && result.status === "ok" && result.response) {
+                updateConversationResponse(convId, provider, result.response);
+                updateConversationUI(convId);
+              }
+            } catch (e) {
+            } finally {
+              inFlightSet.delete(provider);
+            }
+          });
+
+        await Promise.allSettled(tasks);
       } catch (e) {
         console.error(`[Poll] Error:`, e);
         // On critical message error, we might want to mark others as error or retry
@@ -1736,6 +2071,36 @@ document.addEventListener("DOMContentLoaded", async () => {
           .getElementById("modalPositionIndicator")
           ?.classList.remove("hidden");
       }
+    }
+
+    // 自适应宽度：确保模态框不会超出主窗口宽度
+    const detailContent = detailModal.querySelector('.detail-content');
+    if (detailContent) {
+      const windowWidth = window.innerWidth;
+      const modalMaxWidth = 1400; // CSS 中的最大宽度
+      const modalWidthPercent = 94; // CSS 中的宽度百分比
+      
+      // 计算合适的宽度
+      let suitableWidth;
+      if (windowWidth < 400) {
+        // 很小的窗口
+        suitableWidth = '95%';
+      } else if (windowWidth < 600) {
+        // 小窗口
+        suitableWidth = '92%';
+      } else if (windowWidth < 800) {
+        // 中等窗口
+        suitableWidth = '90%';
+      } else {
+        // 大窗口，使用原来的设置
+        suitableWidth = modalWidthPercent + '%';
+      }
+      
+      // 应用宽度，但不超过最大宽度
+      detailContent.style.width = suitableWidth;
+      detailContent.style.maxWidth = modalMaxWidth + 'px';
+      
+      console.log(`[Modal] Window width: ${windowWidth}px, Modal width: ${suitableWidth}`);
     }
 
     detailModal.classList.add("active");
@@ -2120,10 +2485,8 @@ document.addEventListener("DOMContentLoaded", async () => {
           // c. 更新字符统计和按钮
           const actionsArea = card.querySelector(".response-card-actions");
           if (actionsArea) {
-            const showRefresh =
-              response.status === "generating" ||
-              response.status === "error" ||
-              response.status === "loading";
+            const isLatestConversation = conv.id === currentConversationId;
+            const showRefresh = isLatestConversation; // Always show refresh for latest conversation
             const newActionsHTML = `
                             ${response.status === "ok" && response.text ? `<div class="response-char-count">${response.text.length} 字</div>` : ""}
                             ${
@@ -2302,6 +2665,26 @@ Here are the responses from each AI model:
   function updateBadge() {
     const count = getSelectedProviders().length;
     selectionBadge.textContent = count;
+
+    // 更新切换按钮状态
+    const btn = modelToggleAllBtn || document.getElementById("modelToggleAllBtn");
+    if (btn) {
+      const checkboxes = modelsModal.querySelectorAll('input[type="checkbox"]');
+      const allChecked = Array.from(checkboxes).every(
+        (checkbox) => checkbox.checked,
+      );
+
+      const toggleText = btn.querySelector(".toggle-text");
+      if (toggleText) {
+        toggleText.textContent = allChecked ? "全不选" : "全选";
+      }
+
+      if (allChecked) {
+        btn.classList.add("deselect-mode");
+      } else {
+        btn.classList.remove("deselect-mode");
+      }
+    }
   }
 
   /**
@@ -2542,20 +2925,33 @@ Here are the responses from each AI model:
     modelsModal.classList.remove("active");
   });
 
-  // 全选/全不选功能
-  selectAllBtn.addEventListener("click", () => {
-    const checkboxes = modelsModal.querySelectorAll('input[type="checkbox"]');
-    checkboxes.forEach(checkbox => {
-      checkbox.checked = true;
-    });
-  });
+  // 全选/全不选切换功能（模型弹窗）
+  if (modelToggleAllBtn) {
+    modelToggleAllBtn.addEventListener("click", () => {
+      const checkboxes = modelsModal.querySelectorAll('input[type="checkbox"]');
+      const allChecked = Array.from(checkboxes).every(
+        (checkbox) => checkbox.checked,
+      );
 
-  deselectAllBtn.addEventListener("click", () => {
-    const checkboxes = modelsModal.querySelectorAll('input[type="checkbox"]');
-    checkboxes.forEach(checkbox => {
-      checkbox.checked = false;
+      checkboxes.forEach((checkbox) => {
+        checkbox.checked = !allChecked;
+      });
+
+      // 更新按钮文本
+      const toggleText = modelToggleAllBtn.querySelector(".toggle-text");
+      if (toggleText) toggleText.textContent = allChecked ? "全选" : "全不选";
+
+      // 更新按钮标题
+      modelToggleAllBtn.title = allChecked ? "全选所有模型" : "取消全选";
+
+      // 更新按钮样式状态
+      if (allChecked) {
+        modelToggleAllBtn.classList.remove("deselect-mode");
+      } else {
+        modelToggleAllBtn.classList.add("deselect-mode");
+      }
     });
-  });
+  }
 
   // 语言
   langToggleBtn.addEventListener("click", toggleLanguage);
@@ -2573,7 +2969,6 @@ Here are the responses from each AI model:
   }
 
   // 全部展开/折叠
-  const toggleAllBtn = document.getElementById("toggleAllBtn");
   if (toggleAllBtn) {
     // 初始化按钮标题
     // 移除tooltip提示
@@ -2882,6 +3277,37 @@ Here are the responses from each AI model:
         console.log("[Modal] Restored width:", result.modalWidth);
       }
     });
+
+  // 窗口大小变化时，更新模态框宽度
+  window.addEventListener('resize', () => {
+    const detailModal = document.getElementById("detailModal");
+    if (detailModal && detailModal.classList.contains("active")) {
+      const detailContent = detailModal.querySelector('.detail-content');
+      if (detailContent) {
+        const windowWidth = window.innerWidth;
+        const modalMaxWidth = 1400;
+        const modalWidthPercent = 94;
+        
+        // 计算合适的宽度
+        let suitableWidth;
+        if (windowWidth < 400) {
+          suitableWidth = '95%';
+        } else if (windowWidth < 600) {
+          suitableWidth = '92%';
+        } else if (windowWidth < 800) {
+          suitableWidth = '90%';
+        } else {
+          suitableWidth = modalWidthPercent + '%';
+        }
+        
+        // 应用宽度，但不超过最大宽度
+        detailContent.style.width = suitableWidth;
+        detailContent.style.maxWidth = modalMaxWidth + 'px';
+        
+        console.log(`[Modal Resize] Window width: ${windowWidth}px, Modal width: ${suitableWidth}`);
+      }
+    }
+  });
 
     // Reset width when closing modal to avoid it getting stuck huge forever if desired, or keep it.
     // Keeping it is usually what users want for persistence across a session.

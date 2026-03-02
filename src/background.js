@@ -66,6 +66,91 @@ let summaryWindows = {}; // Track separate windows for summarization
 let isSummarizing = {}; // Track if a provider is currently used for summarization
 let savedLayout = {}; // Store saved window layouts
 
+const SUMMARY_TAB_MARKER_PARAM = "multiverse_summary";
+const SUMMARY_TAB_MARKER_VALUE = "1";
+const SUMMARY_WINDOWS_SESSION_KEY = "ai_multiverse_summary_windows";
+
+async function loadSummaryWindowsFromSession() {
+  try {
+    const data = await chrome.storage.session.get(SUMMARY_WINDOWS_SESSION_KEY);
+    const stored = data ? data[SUMMARY_WINDOWS_SESSION_KEY] : null;
+    if (stored && typeof stored === "object") {
+      summaryWindows = stored;
+    }
+  } catch (e) {}
+}
+
+async function saveSummaryWindowsToSession() {
+  try {
+    await chrome.storage.session.set({
+      [SUMMARY_WINDOWS_SESSION_KEY]: summaryWindows,
+    });
+  } catch (e) {}
+}
+
+function buildSummaryUrl(baseUrl) {
+  try {
+    const u = new URL(baseUrl);
+    if (!u.searchParams.has(SUMMARY_TAB_MARKER_PARAM)) {
+      u.searchParams.set(SUMMARY_TAB_MARKER_PARAM, SUMMARY_TAB_MARKER_VALUE);
+    }
+    return u.toString();
+  } catch (e) {
+    // Fallback: best-effort append
+    if (baseUrl.includes("?")) {
+      return baseUrl + `&${SUMMARY_TAB_MARKER_PARAM}=${SUMMARY_TAB_MARKER_VALUE}`;
+    }
+    return baseUrl + `?${SUMMARY_TAB_MARKER_PARAM}=${SUMMARY_TAB_MARKER_VALUE}`;
+  }
+}
+
+async function findExistingSummaryTab(provider, config) {
+  // Prefer a summary-marked tab, never reuse user's normal chat tab.
+  const patternsToCheck = [];
+
+  // Prefer provider configured match patterns (these are valid chrome match patterns)
+  if (config?.urlPattern) patternsToCheck.push(config.urlPattern);
+  if (config?.urlPatternAlt) patternsToCheck.push(config.urlPatternAlt);
+  if (Array.isArray(config?.urlPatterns)) {
+    patternsToCheck.push(...config.urlPatterns);
+  }
+
+  // Also include baseUrl as a match pattern (origin + /*)
+  if (config?.baseUrl) {
+    try {
+      const u = new URL(config.baseUrl);
+      patternsToCheck.push(`${u.protocol}//${u.host}/*`);
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  const uniquePatterns = [...new Set(patternsToCheck.filter(Boolean))];
+  for (const pattern of uniquePatterns) {
+    try {
+      const tabs = await chrome.tabs.query({ url: pattern });
+      const validTab = tabs.find((t) => {
+        if (!t.url) return false;
+        if (t.url.startsWith("chrome-extension://")) return false;
+        if (t.windowId === popupWindowId) return false;
+        try {
+          const u = new URL(t.url);
+          return (
+            u.searchParams.get(SUMMARY_TAB_MARKER_PARAM) ===
+            SUMMARY_TAB_MARKER_VALUE
+          );
+        } catch (e) {
+          return false;
+        }
+      });
+      if (validTab && validTab.id) {
+        return { tabId: validTab.id, windowId: validTab.windowId };
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
 // === Extension Click/Command Behavior ===
 async function togglePopup() {
   const popupUrl = chrome.runtime.getURL("src/sidepanel/sidepanel.html");
@@ -244,10 +329,29 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           sendResponse({ status: "error", error: err.message });
         });
       return true;
+    } else if (request.action === "fetch_response") {
+      fetchSingleResponse(request.provider)
+        .then((response) => {
+          sendResponse({ status: "ok", response });
+        })
+        .catch((err) => {
+          sendResponse({ status: "error", error: err.message });
+        });
+      return true;
     } else if (request.action === "fetch_all_responses") {
       fetchAllResponses(request.providers)
         .then((responses) => {
           sendResponse({ status: "ok", responses });
+        })
+        .catch((err) => {
+          sendResponse({ status: "error", error: err.message });
+        });
+      return true;
+    } else if (request.action === "force_gemini_redetect") {
+      // 强制重新检测 Gemini 内容
+      forceGeminiRedetect()
+        .then((response) => {
+          sendResponse({ status: "ok", response });
         })
         .catch((err) => {
           sendResponse({ status: "error", error: err.message });
@@ -405,6 +509,109 @@ async function fetchAllResponses(providers) {
   return results;
 }
 
+// === Fetch Response from a Single Provider ===
+async function fetchSingleResponse(providerKey) {
+  if (!providerKey || !PROVIDER_CONFIG[providerKey]) {
+    return {
+      status: AI_STATUS.ERROR,
+      text: "",
+      error: "Invalid provider",
+      name: providerKey || "",
+    };
+  }
+
+  let tabId = null;
+  const isSummary = isSummarizing[providerKey];
+
+  if (isSummary) {
+    if (summaryWindows[providerKey]) {
+      try {
+        await chrome.windows.get(summaryWindows[providerKey].windowId);
+        tabId = summaryWindows[providerKey].tabId;
+      } catch (e) {
+        delete summaryWindows[providerKey];
+      }
+    }
+  } else {
+    if (providerWindows[providerKey]) {
+      try {
+        await chrome.windows.get(providerWindows[providerKey].windowId);
+        tabId = providerWindows[providerKey].tabId;
+      } catch (e) {
+        delete providerWindows[providerKey];
+      }
+    }
+
+    if (!tabId) {
+      const config = PROVIDER_CONFIG[providerKey];
+      const patternsToCheck = [config.urlPattern];
+      if (config.urlPatternAlt) patternsToCheck.push(config.urlPatternAlt);
+      if (config.urlPatterns) patternsToCheck.push(...config.urlPatterns);
+
+      const uniquePatterns = [
+        ...new Set(
+          patternsToCheck.filter((p) => typeof p === "string" && p.length > 0),
+        ),
+      ];
+
+      const summaryTabIdToIgnore = summaryWindows[providerKey]
+        ? summaryWindows[providerKey].tabId
+        : -1;
+
+      for (const pattern of uniquePatterns) {
+        try {
+          const tabs = await chrome.tabs.query({ url: pattern });
+          const validTab = tabs.find(
+            (t) =>
+              t.url &&
+              !t.url.startsWith("chrome-extension://") &&
+              t.windowId !== popupWindowId &&
+              t.id !== summaryTabIdToIgnore,
+          );
+          if (validTab) {
+            tabId = validTab.id;
+            providerWindows[providerKey] = {
+              windowId: validTab.windowId,
+              tabId: tabId,
+            };
+            break;
+          }
+        } catch (e) {}
+      }
+    }
+  }
+
+  if (!tabId) {
+    return {
+      status: AI_STATUS.NOT_OPEN,
+      text: "",
+      name: PROVIDER_CONFIG[providerKey].name,
+    };
+  }
+
+  try {
+    await ensureContentScript(tabId);
+    const response = await sendMessageWithRetry(tabId, {
+      action: "extract_response",
+      provider: providerKey,
+    });
+
+    return {
+      ...response,
+      name: PROVIDER_CONFIG[providerKey].name,
+      icon: PROVIDER_CONFIG[providerKey].icon,
+    };
+  } catch (err) {
+    const isTimeout = err.message === "TIMEOUT";
+    return {
+      status: isTimeout ? AI_STATUS.TIMEOUT : AI_STATUS.ERROR,
+      text: "",
+      error: err.message,
+      name: PROVIDER_CONFIG[providerKey].name,
+    };
+  }
+}
+
 // === Diagnose Selectors ===
 async function handleDiagnoseSelectors(provider) {
   // Find tab for this provider
@@ -461,6 +668,9 @@ async function handleSummarizeResponses(provider, prompt) {
 
   let tabId = null;
 
+  // Restore summary windows mapping after MV3 service worker restart
+  await loadSummaryWindowsFromSession();
+
   // Check saved summaryWindows
   if (summaryWindows[provider]) {
     try {
@@ -473,6 +683,21 @@ async function handleSummarizeResponses(provider, prompt) {
     } catch (e) {
       console.log("[AI Multiverse Background] Saved summary window not found");
       delete summaryWindows[provider];
+      await saveSummaryWindowsToSession();
+    }
+  }
+
+  // If mapping missing (common after SW restart), try to find existing summary tab by marker
+  if (!tabId) {
+    const existing = await findExistingSummaryTab(provider, config);
+    if (existing) {
+      tabId = existing.tabId;
+      summaryWindows[provider] = { windowId: existing.windowId, tabId: tabId };
+      await saveSummaryWindowsToSession();
+      console.log(
+        "[AI Multiverse Background] Recovered existing summary tab via marker:",
+        tabId,
+      );
     }
   }
 
@@ -483,12 +708,13 @@ async function handleSummarizeResponses(provider, prompt) {
       provider,
     );
     const newWin = await chrome.windows.create({
-      url: config.baseUrl,
+      url: buildSummaryUrl(config.baseUrl),
       type: "normal",
       focused: false,
     });
     tabId = newWin.tabs[0].id;
     summaryWindows[provider] = { windowId: newWin.id, tabId: tabId };
+    await saveSummaryWindowsToSession();
     console.log("[AI Multiverse Background] Created summary tab:", tabId);
 
     // Wait for tab to load with timeout
@@ -659,12 +885,16 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
           // keyup 触发 Gemini 内部"输入非空"检测，使发送按钮从 disabled → enabled
           el.dispatchEvent(
             new KeyboardEvent("keyup", {
-              key: "a",
-              code: "KeyA",
+              key: "Enter",
+              code: "Enter",
               bubbles: true,
               composed: true,
             }),
           );
+          // 额外触发一次 input 事件确保状态更新
+          setTimeout(() => {
+            el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+          }, 100);
         } catch (e) {}
 
         console.log(
@@ -2014,6 +2244,13 @@ const API_PATTERNS = {
     pattern: /grok\.com\/rest\/app-chat\/conversations\/[^\/]+\/responses/,
     provider: "grok",
   },
+  claude: {
+    // Claude uses SSE streaming completion endpoint
+    // /api/organizations/<orgUuid>/chat_conversations/<conversationUuid>/completion
+    pattern:
+      /claude\.ai\/api\/organizations\/[0-9a-f-]{36}\/chat_conversations\/[0-9a-f-]{36}\/completion/i,
+    provider: "claude",
+  },
   gemini: {
     // Gemini 网页使用内部 BardChatUi batchexecute 端点，或 streamGenerateContent/generateContent
     pattern:
@@ -2075,7 +2312,12 @@ chrome.webRequest.onBeforeRequest.addListener(
         console.log(`[Network Monitor]   URL: ${url}`);
 
         // Extract conversation ID from URL if possible
-        const conversationMatch = url.match(/conversations?\/([a-zA-Z0-9-]+)/);
+        // Supports:
+        // - .../conversations/<id>
+        // - .../chat_conversations/<uuid> (Claude)
+        const conversationMatch = url.match(
+          /(?:chat_conversations|conversations?)\/([a-zA-Z0-9-]+)/,
+        );
         const conversationId = conversationMatch ? conversationMatch[1] : null;
 
         streamingStatus.set(tabId, {
@@ -2242,3 +2484,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 console.log("[Background] Network monitoring initialized");
+
+/**
+ * Force re-detect Gemini content for manual refresh
+ */
+async function forceGeminiRedetect() {
+  try {
+    // Find Gemini tab
+    const tabs = await chrome.tabs.query({ url: "*://gemini.google.com/*" });
+    if (tabs.length === 0) {
+      throw new Error("Gemini tab not found");
+    }
+    
+    const geminiTab = tabs[0];
+    
+    // Send message to content script to force re-detect
+    const response = await sendMessageWithRetry(geminiTab.id, {
+      action: "force_extract_gemini_response",
+      ignoreOldMarkers: true, // 忽略 data-multiverse-old 标记
+      forceFallback: true,    // 强制使用兜底逻辑
+    });
+    
+    if (response && response.status === "ok") {
+      return response;
+    } else {
+      throw new Error("Failed to extract Gemini response");
+    }
+  } catch (error) {
+    console.error("[Background] forceGeminiRedetect error:", error);
+    throw error;
+  }
+}

@@ -606,7 +606,7 @@ function diagnoseSelectors(provider) {
 }
 
 // === Message Listener ===
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   if (request.action === "ping") {
     sendResponse({ status: "alive" });
     return;
@@ -631,13 +631,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           } else {
             console.log("[AI Multiverse] Yuanbao: API 提取失败或无内容，降级到 DOM 方式");
             // API 失败时降级到 DOM 方式
-            const result = await extractLatestResponse(request.provider);
+            const result = extractLatestResponse(request.provider);
             sendResponse(result);
           }
         })
         .catch((err) => {
           console.error("[AI Multiverse] Yuanbao: API 提取异常，降级到 DOM 方式:", err);
-          const result = await extractLatestResponse(request.provider);
+          const result = extractLatestResponse(request.provider);
           sendResponse(result);
         });
       return true; // 异步响应
@@ -645,7 +645,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     // Claude: 优先通过同源 conversation API 提取结构化内容（更稳定），失败则降级到 DOM。
     if (request.provider === "claude") {
-      extractClaudeViaAPI()
+      await extractClaudeViaAPI()
         .then((apiResult) => {
           if (apiResult && apiResult.status === "ok" && apiResult.text) {
             // Validate that this is actually new content, not cached old content
@@ -686,7 +686,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const result = extractLatestResponse(request.provider);
           sendResponse(result);
         })
-        .catch((err) => {
+        .catch(async (err) => {
           console.error("[AI Multiverse] Claude: API extraction failed, falling back to DOM:", err);
           const result = await extractLatestResponse(request.provider);
           sendResponse(result);
@@ -3509,7 +3509,7 @@ async function uploadToYuanbao(file, config) {
 }
 
 // === Message Listener for Force Gemini Re-detect ===
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   if (request.action === "force_extract_gemini_response") {
     try {
       console.log("[AI Multiverse] Force Gemini re-detect triggered");

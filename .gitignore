@@ -9,6 +9,19 @@ test_*
 *test*
 *.test.*
 
+# 忽略调试和开发文件
+debug*
+check*
+fix*
+find_api*
+verify*
+*.sh
+
+# 忽略开发工具目录
+.vscode/
+.qoder/
+.qoder/repowiki/
+
 # 忽略node_modules
 node_modules/
 

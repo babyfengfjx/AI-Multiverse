@@ -2964,8 +2964,8 @@ async function sendMessage(inputEl, config, provider) {
       }
 
       // Fallback: 如果异步 UI 的发送按钮长时间不激活，则尝试一次 Enter 提交
-      // 注意：Kimi 明确只走“点击发送”，不做 Enter 回退，避免重复发送。
-      if (isAsyncUI && provider !== "kimi" && i === 25) {
+      // 注意：移除对Kimi的特殊限制，允许使用Enter键回退
+      if (isAsyncUI && i === 25) {
         console.log("[AI Multiverse] Fast fallback to Enter for", provider);
         sendEnterKey(inputEl);
         // 不立即 return，后续如果按钮激活，还会再尝试一次 click 以保证成功发送

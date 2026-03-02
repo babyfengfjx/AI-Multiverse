@@ -631,13 +631,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           } else {
             console.log("[AI Multiverse] Yuanbao: API 提取失败或无内容，降级到 DOM 方式");
             // API 失败时降级到 DOM 方式
-            const result = extractLatestResponse(request.provider);
+            const result = await extractLatestResponse(request.provider);
             sendResponse(result);
           }
         })
         .catch((err) => {
           console.error("[AI Multiverse] Yuanbao: API 提取异常，降级到 DOM 方式:", err);
-          const result = extractLatestResponse(request.provider);
+          const result = await extractLatestResponse(request.provider);
           sendResponse(result);
         });
       return true; // 异步响应
@@ -688,13 +688,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         })
         .catch((err) => {
           console.error("[AI Multiverse] Claude: API extraction failed, falling back to DOM:", err);
-          const result = extractLatestResponse(request.provider);
+          const result = await extractLatestResponse(request.provider);
           sendResponse(result);
         });
       return true;
     }
 
-    const result = extractLatestResponse(request.provider);
+    const result = await extractLatestResponse(request.provider);
     sendResponse(result);
     return;
   }
@@ -939,7 +939,7 @@ async function extractYuanbaoViaAPI() {
   }
 }
 
-function extractLatestResponse(provider) {
+async function extractLatestResponse(provider) {
   let config = null;
 
   // Find config for this provider
@@ -1081,34 +1081,81 @@ function extractLatestResponse(provider) {
   // 千问特殊处理（基于实际DOM调试）：
   // 千问使用 span.qk-md-text.complete 作为响应容器，内容是逐步加载的。
   // 需要处理多个 span.qk-md-text.complete 元素的聚合，确保获取完整内容。
+  // 关键修复：增加DOM就绪检测，避免时序竞争问题
   // ===================================================================
   if (provider === "qwen") {
     const primarySelectors = config.selectors.response.slice(0, 3); // 使用新的精确选择器
     let allContent = "";
     let foundElements = [];
     
-    // 收集所有千问响应元素
-    for (const sel of primarySelectors) {
-      try {
-        let elements;
-        if (window._forceIgnoreOldMarkers) {
-          // 强制模式：忽略 data-multiverse-old 标记
-          elements = Array.from(document.querySelectorAll(sel));
-          console.log(`[AI Multiverse] Qwen Force mode: ignoring old markers for selector: ${sel}`);
-        } else {
-          // 正常模式：过滤掉已标记的元素
-          elements = Array.from(document.querySelectorAll(sel)).filter(
-            (el) => !el.getAttribute("data-multiverse-old"),
-          );
-        }
-        if (elements.length > 0) {
-          foundElements = foundElements.concat(elements);
-          console.log(`[AI Multiverse] Qwen: Found ${elements.length} elements with selector: ${sel}`);
-        }
-      } catch (e) {
-        console.log(`[AI Multiverse] Qwen: Selector ${sel} failed:`, e);
-      }
-    }
+    // 增加DOM就绪检测：等待千问响应容器出现
+    let domReadyAttempts = 0;
+    const maxDomReadyAttempts = 20; // 最多等待10秒
+    
+    const waitForDom = () => {
+      return new Promise(resolve => {
+        const checkDom = () => {
+          foundElements = [];
+          let hasVisibleContent = false;
+          
+          // 收集所有千问响应元素
+          for (const sel of primarySelectors) {
+            try {
+                let elements;
+                if (window._forceIgnoreOldMarkers) {
+                  // 强制模式：忽略 data-multiverse-old 标记
+                  elements = Array.from(document.querySelectorAll(sel));
+                  console.log(`[AI Multiverse] Qwen Force mode: ignoring old markers for selector: ${sel}`);
+                } else {
+                  // 正常模式：过滤掉已标记的元素
+                  elements = Array.from(document.querySelectorAll(sel)).filter(
+                    (el) => !el.getAttribute("data-multiverse-old"),
+                  );
+                }
+                if (elements.length > 0) {
+                  foundElements = foundElements.concat(elements);
+                  console.log(`[AI Multiverse] Qwen: Found ${elements.length} elements with selector: ${sel}`);
+                  
+                  // 检查是否有可见的内容
+                  const visibleElements = elements.filter(el => {
+                    const text = (el.innerText || el.textContent || "").trim();
+                    const isVisible = el.offsetParent !== null;
+                    return text.length > 0 && isVisible;
+                  });
+                  
+                  if (visibleElements.length > 0) {
+                    hasVisibleContent = true;
+                  }
+                }
+            } catch (e) {
+              console.log(`[AI Multiverse] Qwen: Selector ${sel} failed:`, e);
+            }
+          }
+          
+          // 如果找到可见内容，跳出等待循环
+          if (hasVisibleContent && foundElements.length > 0) {
+            console.log(`[AI Multiverse] Qwen: DOM ready with ${foundElements.length} elements after ${domReadyAttempts} attempts`);
+            resolve();
+            return;
+          }
+          
+          // 如果还没有找到内容，等待500ms再试
+          if (domReadyAttempts < maxDomReadyAttempts - 1) {
+            console.log(`[AI Multiverse] Qwen: DOM not ready, waiting 500ms... (attempt ${domReadyAttempts + 1}/${maxDomReadyAttempts})`);
+            setTimeout(checkDom, 500);
+          } else {
+            // 超时，resolve以继续执行
+            resolve();
+          }
+          
+          domReadyAttempts++;
+        };
+        
+        checkDom();
+      });
+    };
+    
+    await waitForDom();
     
     if (foundElements.length > 0) {
       // 聚合所有找到的内容
@@ -3475,7 +3522,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       window._forceFallback = request.forceFallback || true;
       
       // 强制重新提取 Gemini 响应
-      const result = extractLatestResponse("gemini");
+      const result = await extractLatestResponse("gemini");
       
       // 恢复原始设置
       window._forceIgnoreOldMarkers = originalIgnoreOld;

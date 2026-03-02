@@ -1062,14 +1062,17 @@ body {
     font-size: 13px;
     line-height: 1.6;
     color: var(--text-secondary);
-    /* 防止注入的 HTML 溢出卡片 */
-    overflow: hidden;
-    /* 限制最大高度，超出部分隐藏（展开后在 modal 里查看完整内容） */
+    /* 允许垂直滚动查看完整内容 */
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* 限制最大高度，超出部分显示滚动条 */
     max-height: 600px;
     /* 强制所有子元素不超出宽度 */
     max-width: 100%;
     word-break: break-word;
     overflow-wrap: break-word;
+    /* 为滚动条预留空间 */
+    padding-right: 8px;
 }
 
 /* 阻止注入 HTML 里的绝对/固定定位元素逃出卡片 */
@@ -2446,13 +2449,34 @@ body {
     background: linear-gradient(
         135deg,
         rgba(46, 160, 67, 0.1),
-        rgba(35, 134, 54, 0.05)
+        rgba(46, 160, 67, 0.05)
     );
-    border: 2px solid rgba(46, 160, 67, 0.25);
+    border: 1px solid rgba(46, 160, 67, 0.2);
     border-radius: var(--radius-lg);
-    padding: 20px;
-    margin-bottom: 20px;
+    padding: 16px;
+    margin-bottom: 16px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    /* 改为 visible 允许内部滚动 */
+    overflow: visible;
+    /* 确保卡片内容可以滚动 */
+    max-height: 500px;
+    display: flex;
+    flex-direction: column;
     animation: slideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 确保 summary-body 在卡片中能够正确滚动 */
+.summary-card .summary-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: 400px;
+    padding-right: 8px;
+    /* 确保滚动条样式一致 */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
 }
 
 .summary-card-header {
@@ -2659,11 +2683,90 @@ body {
     flex-wrap: wrap;
 }
 
-/* Summary body - allow text selection */
+/* Summary body - allow text selection and scrolling */
 .summary-body {
-    -webkit-user-select: text;
-    -webkit-user-select: text;
-    user-select: text;
+    -webkit-user-select: text !important;
+    user-select: text !important;
+    white-space: pre-wrap;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    min-height: 0;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    /* 限制最大高度，超出部分显示滚动条 */
+    max-height: 400px !important;
+    padding-right: 8px; /* 为滚动条留出空间 */
+    /* 确保滚动条样式一致 */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+/* 更具体的选择器确保样式生效 */
+.summary-card .summary-body.markdown-content {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    max-height: 400px !important;
+    padding-right: 8px !important;
+    -webkit-user-select: text !important;
+    user-select: text !important;
+}
+
+/* 确保在所有情况下都能滚动 */
+div.summary-body.markdown-content[style*="user-select"] {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    max-height: 400px !important;
+}
+
+/* 修复summary-card的滚动，不影响其他卡片 */
+.summary-card {
+    overflow: visible;
+}
+
+.summary-card .summary-body {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    max-height: 400px !important;
+    min-height: 50px !important;
+    padding-right: 8px !important;
+}
+
+/* 强制显示滚动条 */
+.summary-card .summary-body::-webkit-scrollbar {
+    width: 8px !important;
+    display: block !important;
+}
+
+.summary-card .summary-body::-webkit-scrollbar-track {
+    background: transparent !important;
+}
+
+.summary-card .summary-body::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.3) !important;
+    border-radius: 4px !important;
+}
+
+.summary-card .summary-body::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.5) !important;
+}
+
+/* response-card-body 滚动条样式 */
+.response-card-body::-webkit-scrollbar {
+    width: 8px !important;
+    display: block !important;
+}
+
+.response-card-body::-webkit-scrollbar-track {
+    background: transparent !important;
+}
+
+.response-card-body::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.3) !important;
+    border-radius: 4px !important;
+}
+
+.response-card-body::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.5) !important;
 }
 
 .summary-title {
@@ -4865,46 +4968,89 @@ body.modal-resizing * {
     padding: 0 4px;
 }
 
-.select-all-btn,
-.deselect-all-btn {
+.toggle-all-btn {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 12px;
-    border: 1px solid var(--border-color, #e1e5e9);
-    border-radius: 6px;
-    background: var(--background-secondary, #f8f9fa);
+    padding: 6px 12px;
+    border: 1px solid var(--border, #d0d7de);
+    border-radius: var(--radius-md, 8px);
+    background: var(--bg-card, #ffffff);
     color: var(--text-primary, #24292f);
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    position: relative;
+    overflow: hidden;
 }
 
-.select-all-btn:hover,
-.deselect-all-btn:hover {
-    background: var(--background-tertiary, #f1f3f4);
+.toggle-all-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, var(--accent, #0969da), var(--accent-hover, #0860ca));
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    border-radius: inherit;
+}
+
+.toggle-all-btn:hover {
+    background: var(--bg-secondary, #f6f8fa);
     border-color: var(--accent, #0969da);
     color: var(--accent, #0969da);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(9, 105, 218, 0.15);
 }
 
-.select-all-btn:active,
-.deselect-all-btn:active {
-    transform: scale(0.98);
+.toggle-all-btn:hover::before {
+    opacity: 0.05;
 }
 
-.select-all-btn svg,
-.deselect-all-btn svg {
+.toggle-all-btn:active {
+    transform: translateY(0) scale(0.98);
+    box-shadow: 0 1px 4px rgba(9, 105, 218, 0.2);
+}
+
+.toggle-all-btn svg {
     flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    transition: transform 0.2s ease;
 }
 
-.deselect-all-btn {
+.toggle-all-btn:hover svg {
+    transform: scale(1.1);
+}
+
+.toggle-all-btn.deselect-mode {
+    background: var(--bg-card, #ffffff);
+    border-color: var(--border, #d0d7de);
     color: var(--text-secondary, #656d76);
 }
 
-.deselect-all-btn:hover {
-    color: var(--error, #da3633);
+.toggle-all-btn.deselect-mode:hover {
+    background: var(--bg-error, #fef2f2);
     border-color: var(--error, #da3633);
+    color: var(--error, #da3633);
+    box-shadow: 0 2px 8px rgba(218, 54, 51, 0.15);
+}
+
+.toggle-all-btn.deselect-mode::before {
+    background: linear-gradient(135deg, var(--error, #da3633), var(--error-hover, #cb2d2d));
+}
+
+.toggle-all-btn.deselect-mode:hover::before {
+    opacity: 0.05;
+}
+
+.toggle-text {
+    font-weight: 500;
+    letter-spacing: 0.025em;
 }
 
 .markdown-content .hljs-symbol,

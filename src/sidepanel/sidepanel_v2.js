@@ -280,6 +280,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     "chatgpt",
     "qwen",
     "yuanbao",
+    "claude",
   ];
   let conversations = []; // 所有对话
   let currentConversationId = null; // 当前对话ID

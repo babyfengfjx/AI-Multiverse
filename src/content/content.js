@@ -969,56 +969,201 @@ function extractLatestResponse(provider) {
   const candidates = [];
 
   // ===================================================================
-  // 千问特殊处理（Bug Fix）：
-  // 当千问刚开始生成新回复时，新的回复容器存在但内容为空。
-  // 若不提前处理，空容器会被后续的非空检测过滤掉，
-  // 导致从其他宽泛选择器中选中含有"所有历史回复"的大容器，
-  // 进而把上一条的旧回复内容显示出来。
-  // 解决方案：提前检测"最新容器为空 + 正在生成"的情况，直接返回 GENERATING。
+  // Copilot 特殊处理（基于实际DOM调试）：
+  // Copilot 使用 data-testid="ai-message" 作为主要响应容器，
+  // 内容在 group/ai-message-item 中动态生成。
+  // 解决方案：优先使用精确选择器，处理动态内容生成。
+  // ===================================================================
+  if (provider === "copilot") {
+    const timeSinceSend = Date.now() - (_lastSendTimes["copilot"] || 0);
+    
+    // 检查是否有正在生成的迹象
+    const isGenerating = timeSinceSend < 15000; // 15秒内认为可能在生成
+    
+    // 优先使用最精确的选择器
+    const primarySelectors = [
+      '[data-testid="ai-message"]',
+      'div.group\\/ai-message',
+      '[data-testid*="ai-message"]',
+      'div[class*="group/ai-message"]'
+    ];
+    
+    let foundContent = "";
+    let foundElement = null;
+    
+    // 首先尝试主要选择器
+    for (const sel of primarySelectors) {
+      try {
+        const elements = Array.from(document.querySelectorAll(sel)).filter(
+          (el) => !el.getAttribute("data-multiverse-old"),
+        );
+        if (elements.length > 0) {
+          const lastEl = elements[elements.length - 1];
+          const text = (lastEl.innerText || lastEl.textContent || "").trim();
+          if (text.length > foundContent.length) {
+            foundContent = text;
+            foundElement = lastEl;
+          }
+        }
+      } catch (e) {}
+    }
+    
+    // 如果主要选择器没找到内容，尝试内容容器选择器
+    if (!foundContent) {
+      const contentSelectors = [
+        'div.group\\/ai-message-item.space-y-3.break-words',
+        'div[class*="ai-message-item"]'
+      ];
+      
+      for (const sel of contentSelectors) {
+        try {
+          const elements = Array.from(document.querySelectorAll(sel)).filter(
+            (el) => !el.getAttribute("data-multiverse-old"),
+          );
+          if (elements.length > 0) {
+            const lastEl = elements[elements.length - 1];
+            const text = (lastEl.innerText || lastEl.textContent || "").trim();
+            if (text.length > foundContent.length) {
+              foundContent = text;
+              foundElement = lastEl;
+            }
+          }
+        } catch (e) {}
+      }
+    }
+    
+    // 如果找到内容
+    if (foundContent) {
+      console.log("[AI Multiverse] Copilot: Found content, length:", foundContent.length);
+      
+      // 如果正在生成且内容较短，返回生成状态
+      if (isGenerating && foundContent.length < 100) {
+        console.log("[AI Multiverse] Copilot: Content is short but still generating");
+        return { 
+          status: AI_STATUS.GENERATING, 
+          text: foundContent, 
+          html: foundElement?.innerHTML || "" 
+        };
+      }
+      
+      // 如果正在生成且内容较长，返回生成状态但保留内容
+      if (isGenerating && foundContent.length >= 100) {
+        console.log("[AI Multiverse] Copilot: Found substantial content during generation");
+        return { 
+          status: AI_STATUS.GENERATING, 
+          text: foundContent, 
+          html: foundElement?.innerHTML || "",
+          preserved: true 
+        };
+      }
+      
+      // 如果不在生成期间，返回正常状态
+      console.log("[AI Multiverse] Copilot: Found completed content");
+      return { 
+        status: AI_STATUS.OK, 
+        text: foundContent, 
+        html: foundElement?.innerHTML || "" 
+      };
+    }
+    
+    // 如果没找到内容但在生成期间，返回生成状态
+    if (isGenerating) {
+      console.log("[AI Multiverse] Copilot: No content yet but still generating");
+      return { status: AI_STATUS.GENERATING, text: "", html: "" };
+    }
+    
+    // 如果不在生成期间且没找到内容，返回未找到状态
+    console.log("[AI Multiverse] Copilot: No content found and not generating");
+    return { status: AI_STATUS.NOT_OPEN, text: "", html: "" };
+  }
+
+  // ===================================================================
+  // 千问特殊处理（基于实际DOM调试）：
+  // 千问使用 span.qk-md-text.complete 作为响应容器，内容是逐步加载的。
+  // 需要处理多个 span.qk-md-text.complete 元素的聚合，确保获取完整内容。
   // ===================================================================
   if (provider === "qwen") {
-    const primarySelectors = config.selectors.response.slice(0, 3);
+    const primarySelectors = config.selectors.response.slice(0, 3); // 使用新的精确选择器
+    let allContent = "";
+    let foundElements = [];
+    
+    // 收集所有千问响应元素
     for (const sel of primarySelectors) {
       try {
         let elements;
         if (window._forceIgnoreOldMarkers) {
           // 强制模式：忽略 data-multiverse-old 标记
           elements = Array.from(document.querySelectorAll(sel));
-          console.log(`[AI Multiverse] Force mode: ignoring old markers for selector: ${sel}`);
+          console.log(`[AI Multiverse] Qwen Force mode: ignoring old markers for selector: ${sel}`);
         } else {
           // 正常模式：过滤掉已标记的元素
           elements = Array.from(document.querySelectorAll(sel)).filter(
             (el) => !el.getAttribute("data-multiverse-old"),
           );
         }
-        if (elements.length < 1) continue;
-        const lastEl = elements[elements.length - 1];
-        const lastText = (lastEl.innerText || lastEl.textContent || "").trim();
-        if (lastText.length === 0) {
-          // 最新容器为空，检查是否正在生成
-          const networkStatus = _networkStreamingStatus["qwen"];
-          const stopBtn = document.querySelector(
-            'button:has(svg[data-icon-type="qwpcicon-stopChat"]), ' +
-            'button[aria-label*="停止"], ' +
-            'button[title*="停止"], ' +
-            'button[class*="stop"], ' +
-            '[class*="stop-icon"], ' +
-            'button:has([class*="stop"])'
-          );
-          const timeSinceSend = Date.now() - (_lastSendTimes["qwen"] || 0);
-          if (
-            networkStatus?.isStreaming ||
-            (isElementVisible(stopBtn) && !isElementDisabled(stopBtn)) ||
-            timeSinceSend < 8000
-          ) {
-            console.log(
-              "[AI Multiverse] Qwen: New response container is empty, generation starting...",
-            );
-            return { status: AI_STATUS.GENERATING, text: "", html: "" };
-          }
+        if (elements.length > 0) {
+          foundElements = foundElements.concat(elements);
+          console.log(`[AI Multiverse] Qwen: Found ${elements.length} elements with selector: ${sel}`);
         }
-        break; // 若最新容器有内容，退出提前检测，走正常流程
-      } catch (e) {}
+      } catch (e) {
+        console.log(`[AI Multiverse] Qwen: Selector ${sel} failed:`, e);
+      }
+    }
+    
+    if (foundElements.length > 0) {
+      // 聚合所有找到的内容
+      foundElements.forEach(el => {
+        const text = (el.innerText || el.textContent || "").trim();
+        if (text.length > 0) {
+          allContent += text + "\n\n";
+        }
+      });
+      
+      allContent = allContent.trim();
+      console.log(`[AI Multiverse] Qwen: Aggregated content length: ${allContent.length}`);
+      
+      // 检查是否还在生成
+      const timeSinceSend = Date.now() - (_lastSendTimes["qwen"] || 0);
+      const networkStatus = _networkStreamingStatus["qwen"];
+      
+      // 基于内容长度和时间判断生成状态
+      if (allContent.length === 0) {
+        if (networkStatus?.isStreaming || timeSinceSend < 5000) {
+          console.log("[AI Multiverse] Qwen: No content yet, still generating");
+          return { status: AI_STATUS.GENERATING, text: "", html: "" };
+        } else {
+          console.log("[AI Multiverse] Qwen: No content and generation timeout");
+          return { status: AI_STATUS.NOT_OPEN, text: "", html: "" };
+        }
+      }
+      
+      // 如果内容较短且时间较短，可能还在生成
+      if (allContent.length < 200 && timeSinceSend < 15000) {
+        console.log("[AI Multiverse] Qwen: Short content, likely still generating");
+        return { 
+          status: AI_STATUS.GENERATING, 
+          text: allContent, 
+          html: foundElements.map(el => el.innerHTML).join("") 
+        };
+      }
+      
+      // 内容较长或时间较长，认为生成完成
+      console.log("[AI Multiverse] Qwen: Content extraction completed");
+      return { 
+        status: AI_STATUS.OK, 
+        text: allContent, 
+        html: foundElements.map(el => el.innerHTML).join("") 
+      };
+    } else {
+      // 没有找到任何元素
+      const timeSinceSend = Date.now() - (_lastSendTimes["qwen"] || 0);
+      if (timeSinceSend < 10000) {
+        console.log("[AI Multiverse] Qwen: No elements found, still waiting");
+        return { status: AI_STATUS.GENERATING, text: "", html: "" };
+      } else {
+        console.log("[AI Multiverse] Qwen: No elements found and timeout");
+        return { status: AI_STATUS.NOT_OPEN, text: "", html: "" };
+      }
     }
   }
 
@@ -2793,6 +2938,12 @@ async function sendMessage(inputEl, config, provider) {
   }
 
   switch (config.sendMethod) {
+    case "keyboard": {
+      // 使用键盘事件发送（如Copilot）
+      console.log("[AI Multiverse] Using keyboard send method");
+      sendEnterKey(inputEl);
+      break;
+    }
     case "form": {
       const form = inputEl.closest("form");
       if (form) {
@@ -3102,6 +3253,9 @@ async function uploadSingleFile(file, config, provider) {
     case "yuanbao":
       await uploadToYuanbao(file, config);
       break;
+    case "copilot":
+      await uploadToCopilot(file, config);
+      break;
     default:
       console.warn(
         "[AI Multiverse] Unknown provider for file upload:",
@@ -3343,3 +3497,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 });
+
+/**
+ * Upload file to Copilot
+ */
+async function uploadToCopilot(file, config) {
+  console.log("[AI Multiverse] Uploading file to Copilot:", file.name);
+  
+  // Find the file input element
+  const fileInput = findElement(config.selectors.fileUpload[0]);
+  if (!fileInput) {
+    throw new Error("Copilot file input not found");
+  }
+  
+  // Find the Smart button trigger
+  const smartButton = findElement(config.selectors.fileUpload[1]);
+  if (!smartButton) {
+    console.warn("[AI Multiverse] Copilot Smart button not found, trying direct file input");
+  }
+  
+  // Convert data URL to File object
+  const fileObj = dataURLtoFile(file.data, file.name);
+  
+  // Create a new FileList-like object
+  const dt = new DataTransfer();
+  dt.items.add(fileObj);
+  fileInput.files = dt.files;
+  
+  // Trigger change event
+  fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+  
+  // Wait a bit for the file to be processed
+  await delay(DELAY.MEDIUM);
+  
+  console.log("[AI Multiverse] Copilot file upload completed:", file.name);
+}

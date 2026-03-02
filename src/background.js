@@ -799,28 +799,36 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
 
         el.focus();
 
-        // ── Step 1: 清空现有内容 ─────────────────────────────────────────────
-        // selectAll + cut：让 Quill 的 cut 处理器把内部 Delta 也清空
-        try {
-          const sel = window.getSelection();
-          const range = document.createRange();
-          range.selectNodeContents(el);
-          sel.removeAllRanges();
-          sel.addRange(range);
-        } catch (e) {}
-        try {
-          el.dispatchEvent(
-            new ClipboardEvent("cut", { bubbles: true, cancelable: true }),
-          );
-        } catch (e) {}
+        // ── Step 1: 智能清空现有内容 ─────────────────────────────────────────────
+        // 只有当输入框不为空且不是我们要输入的内容时才清空
+        const currentContent = el.innerText.trim();
+        const shouldClear = currentContent.length > 0 && currentContent !== val.trim();
+        
+        console.log("[AI Multiverse] Gemini: current content:", currentContent.length, "target content:", val.length, "should clear:", shouldClear);
+        
+        if (shouldClear) {
+          // selectAll + cut：让 Quill 的 cut 处理器把内部 Delta 也清空
+          try {
+            const sel = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          } catch (e) {}
+          try {
+            el.dispatchEvent(
+              new ClipboardEvent("cut", { bubbles: true, cancelable: true }),
+            );
+          } catch (e) {}
 
-        // 兜底：如果 cut 没清空，再用 execCommand delete
-        try {
-          if (el.innerText.trim().length > 0) {
-            document.execCommand("selectAll", false, null);
-            document.execCommand("delete", false, null);
-          }
-        } catch (e) {}
+          // 兜底：如果 cut 没清空，再用 execCommand delete
+          try {
+            if (el.innerText.trim().length > 0) {
+              document.execCommand("selectAll", false, null);
+              document.execCommand("delete", false, null);
+            }
+          } catch (e) {}
+        }
 
         el.focus();
 
@@ -1343,6 +1351,130 @@ async function executeMainWorldFill(tabId, selector, text, provider) {
           val.length,
         );
         return true;
+      }
+
+      // ════════════════════════════════════════════════════════════════════════
+      // Microsoft Copilot (人类行为模拟)
+      // 策略：模拟真实用户输入行为，避免触发安全验证
+      // ════════════════════════════════════════════════════════════════════════
+      if (hostname.includes("copilot.microsoft.com")) {
+        const el = findEl([
+          "#userInput",
+          'textarea[placeholder*="Copilot"]',
+          'textarea[placeholder*="发送消息"]',
+          "textarea"
+        ]);
+        if (!el) return false;
+
+        console.log("[AI Multiverse] Copilot: starting human behavior simulation");
+
+        // React Fiber直接操作 - 简化版本
+        const reactFiberDirect = (element, text) => {
+          console.log("[AI Multiverse] Copilot: === React Fiber直接操作 ===");
+          console.log("[AI Multiverse] Copilot: 要输入的文本:", text);
+          
+          // 1. 获取React Fiber节点
+          const reactFiber = element.__reactFiber$kcf0ypvanxb || element._reactInternalInstance$;
+          console.log("[AI Multiverse] Copilot: React Fiber:", !!reactFiber);
+          
+          if (!reactFiber) {
+            console.log("[AI Multiverse] Copilot: 未找到React Fiber，使用备用方法");
+            // 备用方法：强制设置值
+            Object.defineProperty(element, 'value', {
+              value: text,
+              writable: true,
+              configurable: true
+            });
+            element.value = text;
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+            element.dispatchEvent(new Event('change', { bubbles: true }));
+            return;
+          }
+          
+          // 2. 查找React组件实例和状态
+          let component = reactFiber;
+          while (component && component.stateNode !== element) {
+            component = component.return;
+          }
+          
+          console.log("[AI Multiverse] Copilot: React组件:", !!component);
+          
+          if (component && component.stateNode) {
+            // 3. 直接操作React内部状态
+            console.log("[AI Multiverse] Copilot: 直接操作React状态");
+            
+            // 方法1: 直接设置组件的value属性
+            try {
+              if (component.stateNode.value !== undefined) {
+                component.stateNode.value = text;
+                console.log("[AI Multiverse] Copilot: 设置stateNode.value:", text);
+              }
+            } catch (e) {
+              console.log("[AI Multiverse] Copilot: stateNode设置失败:", e);
+            }
+            
+            // 方法2: 强制设置DOM属性
+            try {
+              element.value = text;
+              console.log("[AI Multiverse] Copilot: 强制设置DOM value:", text);
+            } catch (e) {
+              console.log("[AI Multiverse] Copilot: DOM操作失败:", e);
+            }
+            
+            // 4. 触发React更新
+            setTimeout(() => {
+              console.log("[AI Multiverse] Copilot: 触发React更新");
+              
+              // 模拟用户输入事件
+              const inputEvent = new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertText',
+                data: text
+              });
+              element.dispatchEvent(inputEvent);
+              
+              const changeEvent = new Event('change', { bubbles: true });
+              element.dispatchEvent(changeEvent);
+              
+              console.log("[AI Multiverse] Copilot: React操作完成，当前值:", element.value);
+              
+              // 5. 查找并点击提交按钮
+              setTimeout(() => {
+                console.log("[AI Multiverse] Copilot: 查找提交按钮");
+                
+                const submitButton = Array.from(document.querySelectorAll('button')).find(btn => {
+                  const ariaLabel = btn.getAttribute('aria-label');
+                  const title = btn.getAttribute('title');
+                  return ariaLabel === '提交消息' || title === '提交消息';
+                });
+                
+                if (submitButton) {
+                  console.log("[AI Multiverse] Copilot: 找到提交按钮，状态:", {
+                    disabled: submitButton.disabled,
+                    className: submitButton.className,
+                    visible: submitButton.offsetParent !== null
+                  });
+                  
+                  // 强制启用按钮
+                  submitButton.disabled = false;
+                  submitButton.style.opacity = '1';
+                  submitButton.style.pointerEvents = 'auto';
+                  
+                  // 简化的点击操作
+                  setTimeout(() => {
+                    console.log("[AI Multiverse] Copilot: 点击提交按钮");
+                    submitButton.click();
+                  }, 1000);
+                } else {
+                  console.log("[AI Multiverse] Copilot: 未找到提交按钮");
+                }
+              }, 1500);
+            }, 200);
+          } else {
+            console.log("[AI Multiverse] Copilot: 未找到有效的React组件");
+          }
+        };
       }
 
       // ════════════════════════════════════════════════════════════════════════

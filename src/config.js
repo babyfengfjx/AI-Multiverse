@@ -241,7 +241,7 @@ const AI_CONFIG = {
   },
   qwen: {
     name: "通义千问",
-    icon: "icons/qwen.png",
+    icon: "icons/qwen.svg",
     urlPattern: "*://www.qianwen.com/*",
     urlPatternAlt: "*://tongyi.aliyun.com/*",
     urlPatterns: [
@@ -273,6 +273,11 @@ const AI_CONFIG = {
         "button:not([disabled]) svg",
       ],
       response: [
+        // 基于实际DOM调试的精确选择器
+        'span.qk-md-text.complete',
+        'span[class*="qk-md-text"][class*="complete"]',
+        '[class*="qk-md-text"]',
+        // 备用选择器 - 兼容性
         '[class*="answer-content-inner"]',
         '[class*="answer-content"]',
         ".tongyi-markdown",
@@ -302,7 +307,7 @@ const AI_CONFIG = {
   },
   yuanbao: {
     name: "腾讯元宝",
-    icon: "icons/yuanbao.ico",
+    icon: "icons/yuanbao.svg",
     urlPattern: "*://yuanbao.tencent.com/*",
     baseUrl: "https://yuanbao.tencent.com/chat/",
     selectors: {
@@ -335,6 +340,289 @@ const AI_CONFIG = {
     sendMethod: "button",
     supportsFiles: true,
     supportedFileTypes: ["image/*", ".pdf", ".doc", ".docx", ".txt", ".md"],
+  },
+
+  // === New platforms (initial scaffolding) ===
+  claude: {
+    name: "Claude",
+    icon: "icons/claude-logo.svg",
+    urlPattern: "*://claude.ai/*",
+    baseUrl: "https://claude.ai/chat",
+    selectors: {
+      input: [
+        'div[contenteditable="true"]',
+        'div[contenteditable="true"][data-testid="chat-input"]',
+        'textarea[placeholder]',
+        "textarea",
+        'div[role="textbox"]',
+      ],
+      button: [
+        'button[aria-label="Send message"]',
+        'button[type="submit"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'div[role="button"][aria-label*="Send"]',
+      ],
+      response: [
+        '[data-testid*="message"] [class*="markdown"]',
+        '[data-role="assistant"]',
+        'div[class*="assistant"]',
+        'div[class*="message"]',
+      ],
+    },
+    fillMethod: "content-script",
+    sendMethod: "enter",
+    supportsFiles: false,
+  },
+
+  yiyan: {
+    name: "文心一言",
+    icon: "icons/qwen.svg",
+    urlPattern: "*://yiyan.baidu.com/*",
+    baseUrl: "https://yiyan.baidu.com/",
+    selectors: {
+      input: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"]',
+        'div[role="textbox"]',
+        "textarea",
+      ],
+      button: [
+        'button[type="submit"]',
+        'button[aria-label*="发送"]',
+        'button[aria-label*="Send"]',
+        'div[role="button"]:has(svg)',
+      ],
+      response: [
+        '[class*="assistant"] [class*="markdown"]',
+        '[class*="answer"]',
+        '[class*="reply"]',
+        '[data-role="assistant"]',
+      ],
+    },
+    fillMethod: "main-world",
+    sendMethod: "button",
+    supportsFiles: false,
+  },
+
+  doubao: {
+    name: "豆包",
+    icon: "icons/doubao.svg",
+    urlPattern: "*://www.doubao.com/*",
+    baseUrl: "https://www.doubao.com/chat/",
+    selectors: {
+      input: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"]',
+        'div[role="textbox"]',
+        "textarea",
+      ],
+      button: [
+        'button[type="submit"]',
+        'button[aria-label*="发送"]',
+        'button[aria-label*="Send"]',
+        'div[role="button"]:has(svg)',
+      ],
+      response: [
+        '[class*="assistant"] [class*="markdown"]',
+        '[class*="message"] [class*="content"]',
+        '[data-role="assistant"]',
+      ],
+    },
+    fillMethod: "main-world",
+    sendMethod: "button",
+    supportsFiles: false,
+  },
+
+  mistral: {
+    name: "Mistral",
+    icon: "icons/mistral.svg",
+    urlPattern: "*://chat.mistral.ai/*",
+    baseUrl: "https://chat.mistral.ai/chat",
+    selectors: {
+      input: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"]',
+        'div[role="textbox"]',
+        "textarea",
+      ],
+      button: [
+        'button[type="submit"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'div[role="button"]:has(svg)',
+      ],
+      response: [
+        '[data-role="assistant"] [class*="markdown"]',
+        '[class*="assistant"] [class*="markdown"]',
+        '[class*="message"] [class*="markdown"]',
+        '[data-role="assistant"]',
+      ],
+    },
+    fillMethod: "main-world",
+    sendMethod: "button",
+    supportsFiles: false,
+  },
+
+  metaso: {
+    name: "MetaSo",
+    icon: "icons/deepseek.svg",
+    urlPattern: "*://metaso.cn/*",
+    baseUrl: "https://metaso.cn/",
+    selectors: {
+      input: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"]',
+        'div[role="textbox"]',
+        "textarea",
+      ],
+      button: [
+        'button[type="submit"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'div[role="button"]:has(svg)',
+      ],
+      response: [
+        '[class*="assistant"] [class*="markdown"]',
+        '[class*="answer"] [class*="markdown"]',
+        '[class*="result"] [class*="markdown"]',
+        '[data-role="assistant"]',
+      ],
+    },
+    fillMethod: "main-world",
+    sendMethod: "button",
+    supportsFiles: false,
+  },
+
+  chatglm: {
+    name: "ChatGLM",
+    icon: "icons/chatglm.svg",
+    urlPattern: "*://chatglm.cn/*",
+    baseUrl: "https://chatglm.cn/main/alltoolsdetail?lang=zh",
+    selectors: {
+      input: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"]',
+        'div[role="textbox"]',
+        "textarea",
+      ],
+      button: [
+        'button[type="submit"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'div[role="button"]:has(svg)',
+      ],
+      response: [
+        '[class*="assistant"] [class*="markdown"]',
+        '[class*="message"] [class*="content"]',
+        '[data-role="assistant"]',
+      ],
+    },
+    fillMethod: "main-world",
+    sendMethod: "button",
+    supportsFiles: false,
+  },
+
+  stepfun: {
+    name: "StepFun",
+    icon: "icons/stepfun.svg",
+    urlPattern: "*://www.stepfun.com/*",
+    baseUrl: "https://www.stepfun.com/chats/new",
+    selectors: {
+      input: [
+        'textarea[placeholder]',
+        'div[contenteditable="true"]',
+        'div[role="textbox"]',
+        "textarea",
+      ],
+      button: [
+        'button[type="submit"]',
+        'button[aria-label*="Send"]',
+        'button[aria-label*="发送"]',
+        'div[role="button"]:has(svg)',
+      ],
+      response: [
+        '[class*="assistant"] [class*="markdown"]',
+        '[class*="message"] [class*="content"]',
+        '[data-role="assistant"]',
+      ],
+    },
+    fillMethod: "main-world",
+    sendMethod: "button",
+    supportsFiles: false,
+  },
+
+  copilot: {
+    name: "Microsoft Copilot",
+    icon: "icons/copilot.svg",
+    urlPattern: "*://copilot.microsoft.com/*",
+    baseUrl: "https://copilot.microsoft.com/",
+    selectors: {
+      input: [
+        '#userInput',
+        'textarea[placeholder*="Copilot"]',
+        'textarea[placeholder*="发送消息"]',
+        'textarea'
+      ],
+      button: [
+        // Copilot使用键盘事件发送，没有传统发送按钮
+        // 使用Enter键发送机制
+      ],
+      response: [
+        // 最精确的Copilot响应选择器 - 基于实际DOM调试
+        '[data-testid="ai-message"]',
+        'div.group\\/ai-message',
+        // 备用选择器 - 兼容性
+        '[data-testid*="ai-message"]',
+        'div[class*="group/ai-message"]',
+        // 内容容器选择器
+        'div.group\\/ai-message-item.space-y-3.break-words',
+        'div[class*="ai-message-item"]',
+        // 通用AI消息选择器
+        '[class*="message"][class*="assistant"]',
+        '[class*="message"][class*="ai"]',
+        '[class*="message"][class*="bot"]',
+        // 消息容器选择器
+        '[class*="conversation-turn"] [class*="message"]:not([class*="user"])',
+        '[class*="chat-message"] [class*="assistant"]',
+        '[class*="chat-message"]:not([class*="user"])',
+        // 内容区域选择器
+        '[class*="message-content"] [class*="assistant"]',
+        '[class*="response-content"]',
+        '[class*="ai-response"]',
+        // 通用回退选择器
+        '[class*="message"]:not([class*="user"]):not([id*="user"])',
+        '[class*="ai-message-item"]',
+        'div[class*="message"][class*="group"]',
+        // 最通用的选择器
+        '[data-role="assistant"]',
+        '[data-message-author-role="assistant"]'
+      ],
+      messages: [
+        '[class*="ai-message"]',
+        '[class*="message"]:not([class*="user"]):not([id*="user"])',
+        '[class*="ai-message-item"]',
+        'div[class*="message"][class*="group"]'
+      ],
+      fileUpload: [
+        'input[type="file"]',
+        '[class*="flex-col-reverse"]' // Smart按钮容器
+      ]
+    },
+    fillMethod: "main-world",
+    sendMethod: "keyboard", // 使用键盘事件发送
+    sendKey: "Enter", // Enter键发送
+    supportsFiles: true,
+    supportedFileTypes: ["image/*", ".pdf", ".doc", ".docx", ".txt", ".md", ".json", ".xml", ".csv", ".js", ".css", ".html", ".htm"],
+    // Copilot特殊设置：人类行为模拟
+    humanBehavior: {
+      enabled: true,
+      typingDelay: { min: 50, max: 150 }, // 打字延迟范围(ms)
+      pauseBeforeSend: { min: 800, max: 2000 }, // 发送前暂停(ms)
+      randomMouseMove: true, // 随机鼠标移动
+      focusBeforeInput: true, // 输入前先聚焦
+      simulateTyping: true // 模拟逐字输入
+    }
   },
 };
 

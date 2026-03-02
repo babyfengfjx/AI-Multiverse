@@ -19,7 +19,12 @@ function configureMarked() {
           } catch (e) {}
         }
         try {
-          return hljs.highlightAuto(code).value;
+          const result = hljs.highlightAuto(code);
+          // Fix: Don't use language 'plain' as it's not recognized by highlight.js
+          if (result.language === 'plain') {
+            return hljs.highlightAuto(code, ['javascript', 'python', 'json', 'markdown', 'html', 'css']).value || code;
+          }
+          return result.value;
         } catch (e) {
           return code;
         }
@@ -400,9 +405,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     "metaso",
     "chatglm",
     "stepfun",
+    "copilot",
   ];
   let conversations = []; // 所有对话
-  let currentConversationId = null; // 当前对话ID
+  let currentConversationId = null; // 当前活跃对话ID
+  let latestConversationId = null; // 最新对话ID（用于刷新按钮判断）
   let currentLang = "zh-CN";
   let selectedFiles = [];
   let summarizeModel = "gemini";
@@ -507,6 +514,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     conversations.push(conversation);
     currentConversationId = id;
+    latestConversationId = id; // 新创建的对话就是最新的
 
     return id;
   }
@@ -745,6 +753,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         conversations.sort((a, b) => a.timestamp - b.timestamp);
         conversations.forEach((c) => (c.collapsed = true));
         currentConversationId = conversations[conversations.length - 1].id;
+        latestConversationId = conversations[conversations.length - 1].id; // 最新对话ID
 
         renderConversations();
         setTimeout(() => {
@@ -1182,7 +1191,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           : null;
 
     // Show refresh button only for latest conversation
-    const isLatestConversation = conv.id === currentConversationId;
+    const isLatestConversation = conv.id === latestConversationId;
     const showRefresh = isLatestConversation; // Always show refresh for latest conversation
     const actionBtn = showRefresh
       ? `
@@ -1203,7 +1212,7 @@ document.addEventListener("DOMContentLoaded", async () => {
               <div class="response-card ${response.status}" data-provider="${provider}" data-conv-id="${conv.id}" style="cursor: pointer;">
                   <div class="response-card-header">
                       <div class="response-card-info">
-                          <img src="${config.icon}" class="provider-icon-img" alt="${config.name}">
+                          <img src="${config.icon.replace('icons/', 'assets/icons/')}" class="provider-icon-img" alt="${config.name}">
                           <span>${config.name}</span>
                           ${getStatusBadge(response.status)}
                       </div>
@@ -1477,7 +1486,17 @@ document.addEventListener("DOMContentLoaded", async () => {
                     ${isGenerating ? '<span class="status-badge generating" style="font-size:11px;">&#x1F504; 生成中...</span>' : ""}
                 </div>
             </div>
-            <div class="summary-body markdown-content" style="user-select: text; -webkit-user-select: text;">
+            <div class="summary-body markdown-content" style="
+                user-select: text !important; 
+                -webkit-user-select: text !important;
+                overflow-y: auto !important;
+                overflow-x: hidden !important;
+                max-height: 400px !important;
+                padding-right: 8px !important;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+                overflow-wrap: break-word;
+            ">
                 ${bodyContent || '<span style="color: var(--text-secondary); font-style: italic;">正在生成总结...</span>'}
             </div>
         `;
@@ -1502,7 +1521,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const modelConfig = AI_CONFIG[summary.model];
     if (modelConfig) {
-      detailIcon.src = modelConfig.icon;
+      detailIcon.src = chrome.runtime.getURL(modelConfig.icon);
       detailName.textContent = `✨ 智能总结 - ${modelConfig.name}`;
     } else {
       detailIcon.src = "";
@@ -2045,7 +2064,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const positionDots = document.getElementById("positionDots");
 
     const config = AI_CONFIG[provider];
-    detailIcon.src = config.icon;
+    detailIcon.src = config.icon ? chrome.runtime.getURL(config.icon) : "";
     detailName.textContent = config.name;
 
     detailText.innerHTML = normalizeAndRender(response);
@@ -2485,7 +2504,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           // c. 更新字符统计和按钮
           const actionsArea = card.querySelector(".response-card-actions");
           if (actionsArea) {
-            const isLatestConversation = conv.id === currentConversationId;
+            const isLatestConversation = conv.id === latestConversationId;
             const showRefresh = isLatestConversation; // Always show refresh for latest conversation
             const newActionsHTML = `
                             ${response.status === "ok" && response.text ? `<div class="response-char-count">${response.text.length} 字</div>` : ""}
@@ -2841,6 +2860,7 @@ Here are the responses from each AI model:
 
     conversations = [];
     currentConversationId = null;
+    latestConversationId = null;
 
     // 使用统一存储函数，确保 storage_version 也一并保存
     await saveAllToStorage();
@@ -2874,6 +2894,14 @@ Here are the responses from each AI model:
 
     if (currentConversationId === convId) {
       currentConversationId =
+        conversations.length > 0
+          ? conversations[conversations.length - 1].id
+          : null;
+    }
+
+    // 更新最新对话ID
+    if (latestConversationId === convId) {
+      latestConversationId =
         conversations.length > 0
           ? conversations[conversations.length - 1].id
           : null;

@@ -2097,13 +2097,21 @@ function getGenerationStatus(provider, lastEl) {
       return AI_STATUS.GENERATING;
     }
 
-    const timeSinceStreamEnd = now - (networkStatus.endTime || 0);
-    if (timeSinceStreamEnd < 800) {
-      // 流刚结束，DOM 可能还在渲染最后几段内容（React/Vue 框架有渲染延迟）
+    // 如果没有endTime，说明模型没有发送网络流状态消息，回退到原来的逻辑
+    if (!networkStatus.endTime) {
+      // 流结束但没有endTime记录，直接进入内容稳定性检测
       console.log(
-        `[AI Multiverse] ${provider}: Generating (stream ended ${timeSinceStreamEnd}ms ago, waiting for DOM)`,
+        `[AI Multiverse] ${provider}: No endTime recorded, falling back to content stability check`,
       );
-      return AI_STATUS.GENERATING;
+    } else {
+      const timeSinceStreamEnd = now - networkStatus.endTime;
+      if (timeSinceStreamEnd < 800) {
+        // 流刚结束，DOM 可能还在渲染最后几段内容（React/Vue 框架有渲染延迟）
+        console.log(
+          `[AI Multiverse] ${provider}: Generating (stream ended ${timeSinceStreamEnd}ms ago, waiting for DOM)`,
+        );
+        return AI_STATUS.GENERATING;
+      }
     }
     // 流结束超过 800ms → 落入内容稳定性检测
     // ─── DeepSeek R1 / 长思考块安全阀 ──────────────────────────────────────
@@ -2112,6 +2120,7 @@ function getGenerationStatus(provider, lastEl) {
     // 若此时通过稳定计数器判为完成，答案内容将全部丢失。
     // 解决方案：流结束后 5 秒内，要求更多稳定周期（6 次，约 4.8s），
     // 确保思考块 → 答案 的过渡期被覆盖。
+    const timeSinceStreamEnd = networkStatus.endTime ? (now - networkStatus.endTime) : Infinity;
     if (timeSinceStreamEnd < 5000) {
       if (currentText !== _lastResponseTexts[provider]) {
         _lastResponseTexts[provider] = currentText;

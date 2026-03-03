@@ -2103,6 +2103,7 @@ function getGenerationStatus(provider, lastEl) {
       console.log(
         `[AI Multiverse] ${provider}: No endTime recorded, falling back to content stability check`,
       );
+      // 直接进入内容稳定性检测，跳过流结束后的特殊处理
     } else {
       const timeSinceStreamEnd = now - networkStatus.endTime;
       if (timeSinceStreamEnd < 800) {
@@ -2112,35 +2113,35 @@ function getGenerationStatus(provider, lastEl) {
         );
         return AI_STATUS.GENERATING;
       }
-    }
-    // 流结束超过 800ms → 落入内容稳定性检测
-    // ─── DeepSeek R1 / 长思考块安全阀 ──────────────────────────────────────
-    // DeepSeek R1 先输出几千字的思考块，思考结束后有 1-2s 停顿，
-    // 随后才开始输出真正的答案。停顿期间内容看似"稳定"，
-    // 若此时通过稳定计数器判为完成，答案内容将全部丢失。
-    // 解决方案：流结束后 5 秒内，要求更多稳定周期（6 次，约 4.8s），
-    // 确保思考块 → 答案 的过渡期被覆盖。
-    const timeSinceStreamEnd = networkStatus.endTime ? (now - networkStatus.endTime) : Infinity;
-    if (timeSinceStreamEnd < 5000) {
-      if (currentText !== _lastResponseTexts[provider]) {
-        _lastResponseTexts[provider] = currentText;
-        _stableCounters[provider] = 0;
+      
+      // 流结束超过 800ms → 落入内容稳定性检测
+      // ─── DeepSeek R1 / 长思考块安全阀 ──────────────────────────────────────
+      // DeepSeek R1 先输出几千字的思考块，思考结束后有 1-2s 停顿，
+      // 随后才开始输出真正的答案。停顿期间内容看似"稳定"，
+      // 若此时通过稳定计数器判为完成，答案内容将全部丢失。
+      // 解决方案：流结束后 5 秒内，要求更多稳定周期（6 次，约 4.8s），
+      // 确保思考块 → 答案 的过渡期被覆盖。
+      if (timeSinceStreamEnd < 5000) {
+        if (currentText !== _lastResponseTexts[provider]) {
+          _lastResponseTexts[provider] = currentText;
+          _stableCounters[provider] = 0;
+          console.log(
+            `[AI Multiverse] ${provider}: Generating (post-stream content changing, len=${currentText.length})`,
+          );
+          return AI_STATUS.GENERATING;
+        }
+        _stableCounters[provider] = (_stableCounters[provider] || 0) + 1;
         console.log(
-          `[AI Multiverse] ${provider}: Generating (post-stream content changing, len=${currentText.length})`,
+          `[AI Multiverse] ${provider}: Post-stream stable ${_stableCounters[provider]}/6`,
         );
+        if (_stableCounters[provider] >= 6) {
+          console.log(
+            `[AI Multiverse] ${provider}: OK (post-stream stable 6 cycles)`,
+          );
+          return AI_STATUS.OK;
+        }
         return AI_STATUS.GENERATING;
       }
-      _stableCounters[provider] = (_stableCounters[provider] || 0) + 1;
-      console.log(
-        `[AI Multiverse] ${provider}: Post-stream stable ${_stableCounters[provider]}/6`,
-      );
-      if (_stableCounters[provider] >= 6) {
-        console.log(
-          `[AI Multiverse] ${provider}: OK (post-stream stable 6 cycles)`,
-        );
-        return AI_STATUS.OK;
-      }
-      return AI_STATUS.GENERATING;
     }
     // 流结束超过 5s → 正常 3 周期稳定即可完成
   }
